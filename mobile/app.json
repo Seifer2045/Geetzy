@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "Geetzy",
+    "slug": "geetzy",
+    "scheme": "geetzy",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0A0A0F",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.geetzy.app"
+    },
+    "android": {
+      "package": "com.geetzy.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#0A0A0F"
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 120,
+          "resizeMode": "contain",
+          "backgroundColor": "#0A0A0F"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Geetzy to use your photos to make your song video."
+        }
+      ],
+      "expo-status-bar",
+      "expo-image",
+      "@react-native-google-signin/google-signin",
+      "expo-video"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

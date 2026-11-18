@@ -1,0 +1,11 @@
+# Not uploaded to Vercel. Secrets come from Vercel Environment Variables, never from files.
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+tests/
+scripts/
+requirements-dev.txt

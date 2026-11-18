@@ -1,0 +1,13 @@
+# Secrets (never commit)
+.env
+.env.*
+!.env.example
+*.keystore
+*.jks
+local.properties
+
+# Build / tooling
+node_modules/
+.claude/settings.local.json
+.DS_Store
+Thumbs.db
