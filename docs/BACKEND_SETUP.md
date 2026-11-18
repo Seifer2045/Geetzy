@@ -54,7 +54,7 @@ npx vercel link                 # new project, e.g. geetzy-api; root = this fold
 powershell -ExecutionPolicy Bypass -File .\scripts\push-env.ps1   # copies backend/.env values to Vercel
 npx vercel --prod               # deploy; prints the URL, e.g. https://geetzy-api.vercel.app
 ```
-- Vercel finds FastAPI in `app/main.py` and installs `requirements.txt`. `vercel.json` gives it 300 s.
+- Vercel loads FastAPI from `index.py` (it just imports `app/main.py`) and installs `requirements.txt`. `vercel.json` gives it 300 s.
 - `.vercelignore` keeps `.env`, `.venv` and tests from being uploaded. Keys come only from Vercel env vars.
 - `PUBLIC_BASE_URL` can stay empty: the app uses Vercel's production URL for the JSON2Video webhook.
 - Check: open `https://<your-url>/health` → `{"ok":true}`, and `/templates` → the 9 templates.

@@ -1,10 +1,10 @@
 # Copies every filled-in value from backend/.env into the linked Vercel project (Production).
-# Run from D:\TestApp\backend after `npx vercel link`:
+# Run from D:\Geetzy\backend after `npx vercel link`:
 #   powershell -ExecutionPolicy Bypass -File .\scripts\push-env.ps1
 Set-Location (Split-Path $PSScriptRoot -Parent)
 
 if (-not (Test-Path ".vercel\project.json")) {
-  Write-Host "Run 'npx vercel link' in D:\TestApp\backend first." -ForegroundColor Red
+  Write-Host "Run 'npx vercel link' in D:\Geetzy\backend first." -ForegroundColor Red
   exit 1
 }
 
