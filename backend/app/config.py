@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     gemini_text_model: str = "gemini-flash-latest"
     gemini_fallback_model: str = "gemini-flash-lite-latest"
     lyria_model: str = "lyria-3-clip-preview"
+    # Who makes the song. "loudly" = temporary (instrumental only), "lyria" = Google Lyria 3 (sung).
+    song_provider: str = "loudly"
+    loudly_api_key: str = ""
     lyrics_per_day: int = 40  # per user, protects Gemini cost
 
     @property

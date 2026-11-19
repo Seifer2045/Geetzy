@@ -11,7 +11,8 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
-from .ai.gemini import EST_COST_LYRICS_USD, EST_COST_SONG_USD, compose_song, song_prompt, write_lyrics
+from .ai import gemini, loudly
+from .ai.gemini import EST_COST_LYRICS_USD, write_lyrics
 from .config import get_settings
 from .db import MEDIA_BUCKET, UPLOADS_BUCKET, db, one, signed_url, upload_bytes
 from .video.json2video import MovieInput, build_movie, create_movie, get_movie
@@ -110,14 +111,24 @@ def _make_song_and_render(g: dict) -> None:
 
         if not song["audio_path"]:  # a retry after a failed render reuses the song
             _set_status(g["id"], "composing")
-            audio = compose_song(song_prompt(style=tpl["style"], mood=song["mood"], singer=song["singer"], lyrics=song["lyrics"]))
-            _log_ai(g["user_id"], g["id"], "song", s.lyria_model, EST_COST_SONG_USD)
+            audio, model, cost = _compose(tpl["style"], song)
+            _log_ai(g["user_id"], g["id"], "song", model, cost)
             path = upload_bytes(MEDIA_BUCKET, f"{g['user_id']}/{g['id']}/song.mp3", audio, "audio/mpeg")
-            db().table("gift_songs").update({"audio_path": path, "model": s.lyria_model}).eq("gift_id", g["id"]).execute()
+            db().table("gift_songs").update({"audio_path": path, "model": model}).eq("gift_id", g["id"]).execute()
             song = {**song, "audio_path": path}
 
     _set_status(g["id"], "rendering", error=None)
     start_render(g, "preview", song=song, tpl=tpl)
+
+
+def _compose(style: str, song: dict) -> tuple[bytes, str, float]:
+    """MP3 bytes + model name + estimated cost, from the provider set in SONG_PROVIDER."""
+    s = get_settings()
+    if s.song_provider == "lyria":
+        prompt = gemini.song_prompt(style=style, mood=song["mood"], singer=song["singer"], lyrics=song["lyrics"])
+        return gemini.compose_song(prompt), s.lyria_model, gemini.EST_COST_SONG_USD
+    prompt = loudly.music_prompt(style=style, mood=song["mood"])
+    return loudly.compose_song(prompt), "loudly", loudly.EST_COST_SONG_USD
 
 
 # ───────────────────────────────────────────────────────────── rendering

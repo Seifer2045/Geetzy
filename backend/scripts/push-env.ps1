@@ -9,7 +9,7 @@ if (-not (Test-Path ".vercel\project.json")) {
 }
 
 # Values only the server needs to know are stored as Secrets (hidden in the dashboard).
-$secretNames = @('SUPABASE_SECRET_KEY', 'GEMINI_API_KEY', 'JSON2VIDEO_API_KEY', 'INTERNAL_SECRET', 'WEBHOOK_SECRET')
+$secretNames = @('SUPABASE_SECRET_KEY', 'GEMINI_API_KEY', 'JSON2VIDEO_API_KEY', 'INTERNAL_SECRET', 'WEBHOOK_SECRET', 'LOUDLY_API_KEY')
 $failed = 0
 
 foreach ($line in Get-Content ".env") {
