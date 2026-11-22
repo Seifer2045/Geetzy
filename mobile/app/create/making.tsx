@@ -9,7 +9,7 @@ import { AppText, Button, GlassCard, Lottie, Screen, Vinyl } from '@/components'
 import { env } from '@/config/env';
 import { colors, enterUp, screenPadding, stagger } from '@/theme';
 
-/** Rough time for the whole job: Gemini lyrics + Lyria song + JSON2Video render (mock: 14 s). */
+/** Rough time for the whole job: ElevenLabs song + JSON2Video render (mock: 14 s). */
 const TYPICAL_JOB_SEC = env.useMock ? 14 : 75;
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
@@ -18,8 +18,7 @@ const R = 100;
 const C = 2 * Math.PI * R;
 
 const STEPS: { key: GiftStatus; label: string }[] = [
-  { key: 'writing_lyrics', label: 'Writing the lyrics' },
-  { key: 'composing', label: 'Composing the song' },
+  { key: 'composing', label: 'Composing your song' },
   { key: 'rendering', label: 'Syncing photos to the beat' },
   { key: 'preview_ready', label: 'Final touches' },
 ];

@@ -12,20 +12,20 @@ class Settings(BaseSettings):
 
     supabase_url: str
     supabase_secret_key: str
-    gemini_api_key: str
     json2video_api_key: str
     internal_secret: str
     webhook_secret: str
     public_base_url: str = ""
     allow_fake_payments: bool = False
 
-    gemini_text_model: str = "gemini-flash-latest"
-    gemini_fallback_model: str = "gemini-flash-lite-latest"
-    lyria_model: str = "lyria-3-clip-preview"
-    # Who makes the song. "loudly" = temporary (instrumental only), "lyria" = Google Lyria 3 (sung).
-    song_provider: str = "loudly"
-    loudly_api_key: str = ""
-    lyrics_per_day: int = 40  # per user, protects Gemini cost
+    # AI songs: ElevenLabs Music. Empty key = AI songs fail with a clear message (own songs still work).
+    elevenlabs_api_key: str = ""
+    elevenlabs_model: str = "music_v1"
+
+    # xAI Grok writes the JSON movie template (admin click only, never per gift). Model name: verify on the first call.
+    xai_api_key: str = ""
+    xai_model: str = "grok-4"
+    xai_calls_per_day: int = 40  # all admins together; protects the xAI bill
 
     @property
     def base_url(self) -> str:

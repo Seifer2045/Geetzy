@@ -8,6 +8,7 @@ from .config import get_settings
 
 UPLOADS_BUCKET = "gift-uploads"  # written by the app (photos, own songs)
 MEDIA_BUCKET = "gift-media"  # written by the backend (Lyria songs, videos)
+TEMPLATE_BUCKET = "template-media"  # PUBLIC: template art, previews, sample photos (written by the studio jobs)
 SIGNED_URL_SECONDS = 60 * 60
 
 
@@ -48,3 +49,10 @@ def remove_folder(bucket: str, prefix: str) -> None:
             paths.extend(f"{name}/{f['name']}" for f in store.list(name, {"limit": 1000}) if f.get("id"))
     for i in range(0, len(paths), 100):
         store.remove(paths[i : i + 100])
+
+
+def public_url(bucket: str, path: str | None) -> str | None:
+    """URL of a file in a PUBLIC bucket (template-media). Never use for private buckets."""
+    if not path:
+        return None
+    return f"{get_settings().supabase_url}/storage/v1/object/public/{bucket}/{path}"

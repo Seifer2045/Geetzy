@@ -1,17 +1,22 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { env } from '@/config/env';
 import { api } from './client';
-import type { CreateGiftInput, LyricsInput, TemplateQuery } from './types';
+import type { CreateGiftInput, TemplateQuery } from './types';
 
 export const queryKeys = {
   templates: (q: TemplateQuery) => ['templates', q] as const,
   template: (id: string) => ['template', id] as const,
+  categories: (outputType?: string) => ['categories', outputType ?? 'all'] as const,
   gift: (id: string) => ['gift', id] as const,
   library: ['library'] as const,
 };
 
 export const useTemplates = (q: TemplateQuery = {}) =>
   useQuery({ queryKey: queryKeys.templates(q), queryFn: () => api.listTemplates(q) });
+
+/** Categories the admin manages (order included). Cached for 5 minutes. */
+export const useCategories = (outputType?: 'song_video' | 'image') =>
+  useQuery({ queryKey: queryKeys.categories(outputType), queryFn: () => api.listCategories(outputType), staleTime: 5 * 60_000 });
 
 export const useTemplate = (id: string | undefined) =>
   useQuery({ queryKey: queryKeys.template(id ?? ''), queryFn: () => api.getTemplate(id ?? ''), enabled: Boolean(id) });
@@ -31,21 +36,6 @@ export const useGift = (id: string | undefined) =>
       const finished = g.status === 'failed' || g.status === 'preview_ready' || (g.status === 'paid' && Boolean(g.hdUrl));
       return finished ? false : POLL_MS;
     },
-  });
-
-/**
- * Gemini writes the lyrics on the server (mock: local sample lyrics).
- * Cached per template + name + fun fact + mood + version, so V1/V2/V3 switch instantly once made.
- * Singer only changes the music, not the words, so it is not part of the key.
- */
-export const useLyrics = (input: LyricsInput | null) =>
-  useQuery({
-    queryKey: ['lyrics', input?.templateId, input?.recipientName, input?.funFact, input?.mood, input?.version] as const,
-    queryFn: () => api.generateLyrics(input!),
-    enabled: Boolean(input),
-    staleTime: Infinity,
-    gcTime: 30 * 60_000,
-    retry: 1,
   });
 
 export const useDeleteAccount = () => useMutation({ mutationFn: () => api.deleteAccount() });

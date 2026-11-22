@@ -1,5 +1,5 @@
-import { generateLyrics, songTitle } from '@/utils/lyrics';
-import type { AiSong, CreateGiftInput, Gift, GiftStatus, LibraryItem, LyricsInput, Template, TemplateQuery } from './types';
+import type { Category, CreateGiftInput, Gift, GiftStatus, LibraryItem, Template, TemplateQuery } from './types';
+import { OCCASIONS } from '@/constants/catalog';
 import { libraryItems, templates } from './mockData';
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -34,9 +34,17 @@ export const mockApi = {
     return templates.filter(
       (t) =>
         (!query.occasion || t.occasion === query.occasion) &&
+        (!query.category || t.occasion === query.category) &&
         (!query.style || t.style === query.style) &&
         (!q || t.name.toLowerCase().includes(q) || t.tags.some((tag) => tag.toLowerCase().includes(q))),
     );
+  },
+
+  async listCategories(): Promise<Category[]> {
+    await delay(200);
+    return OCCASIONS.filter((o) => !o.soon).map((o) => ({
+      id: o.id, slug: o.id, name: o.label, emoji: null, colors: o.colors, outputType: 'song_video' as const,
+    }));
   },
 
   async getTemplate(id: string): Promise<Template> {
@@ -94,18 +102,6 @@ export const mockApi = {
       };
     }
     return materialize(g);
-  },
-
-  async generateLyrics(input: LyricsInput): Promise<AiSong> {
-    await delay(900);
-    const t = findTemplate(input.templateId);
-    const occasion = t?.occasion ?? 'birthday';
-    return {
-      title: songTitle(input.recipientName, occasion),
-      lyrics: generateLyrics({ name: input.recipientName, funFact: input.funFact, occasion, mood: input.mood, version: input.version }),
-      versions: 3,
-      retriesLeft: 2,
-    };
   },
 
   async deleteAccount(): Promise<{ ok: boolean }> {

@@ -25,10 +25,38 @@ export type Template = {
   colors: readonly [string, string];
   previewUrl: string | null;
   trending: boolean;
+  // Managed from the admin dashboard. Older servers omit these, so they are optional.
+  categoryId?: string | null;
+  /** Category slug (same as the old occasion for the built-in ones). */
+  category?: string | null;
+  orientation?: Orientation;
+  outputType?: OutputType;
+  songMode?: SongMode;
+  thumbUrl?: string | null;
+  /** What previewUrl points to. */
+  previewType?: 'video' | 'image';
+};
+
+export type Orientation = 'vertical' | 'horizontal';
+/** song_video = video with a song, image = styled photo (no song). */
+export type OutputType = 'song_video' | 'image';
+/** Which song choices the template allows. 'none' = no song step at all. */
+export type SongMode = 'ai' | 'upload' | 'both' | 'none';
+
+export type Category = {
+  id: string;
+  slug: string;
+  name: string;
+  emoji: string | null;
+  colors: readonly [string, string];
+  outputType: OutputType;
 };
 
 export type TemplateQuery = {
   occasion?: Occasion;
+  /** Category slug (admin-managed). */
+  category?: string;
+  outputType?: OutputType;
   style?: TemplateStyle;
   q?: string;
 };
@@ -52,16 +80,8 @@ export type CreateGiftInput = {
   funFact: string;
   /** Paths in the Supabase `gift-uploads` bucket (uploaded by the app first). */
   photoPaths: string[];
-  song: SongSource;
-};
-
-export type LyricsInput = {
-  templateId: string;
-  recipientName: string;
-  funFact: string;
-  mood: Mood;
-  singer: Singer;
-  version: number;
+  /** null when the template has no song (photo templates, song mode 'none'). */
+  song: SongSource | null;
 };
 
 export type GiftStatus =
@@ -102,13 +122,6 @@ export type LibraryItem = {
   colors: readonly [string, string];
   giftId: string | null;
   createdAt: string;
-};
-
-export type AiSong = {
-  title: string;
-  lyrics: string;
-  versions: number;
-  retriesLeft: number;
 };
 
 export type User = {

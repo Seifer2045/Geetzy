@@ -3,9 +3,9 @@ import { ActivityIndicator, ScrollView, StyleSheet, TextInput, useWindowDimensio
 import { router, useLocalSearchParams } from 'expo-router';
 import Animated from 'react-native-reanimated';
 import { useTemplates } from '@/api/hooks';
-import type { Occasion, Template, TemplateStyle } from '@/api/types';
+import type { Template, TemplateStyle } from '@/api/types';
 import { AppText, Chip, Icon, Screen, TemplateCard, TopBar } from '@/components';
-import { occasionLabel, OCCASIONS } from '@/constants/catalog';
+import { useCategoryTiles } from '@/hooks/useCategoryTiles';
 import { useCreateFlow } from '@/store/createFlow';
 import { colors, enterUp, fonts, screenPadding } from '@/theme';
 
@@ -17,13 +17,14 @@ const STYLE_FILTERS: { id: TemplateStyle | 'all'; label: string }[] = [
 ];
 
 export default function Templates() {
-  const params = useLocalSearchParams<{ occasion?: Occasion }>();
-  const [occasion, setOccasion] = useState<Occasion | undefined>(params.occasion);
+  const params = useLocalSearchParams<{ occasion?: string }>();
+  const tiles = useCategoryTiles();
+  const [occasion, setOccasion] = useState<string | undefined>(params.occasion);
   const [style, setStyle] = useState<TemplateStyle | 'all'>('all');
   const [q, setQ] = useState('');
   const { width } = useWindowDimensions();
   const cardW = (width - screenPadding * 2 - 12) / 2;
-  const { data = [], isLoading } = useTemplates({ occasion, style: style === 'all' ? undefined : style, q: q || undefined });
+  const { data = [], isLoading } = useTemplates({ category: occasion, style: style === 'all' ? undefined : style, q: q || undefined });
 
   const open = (t: Template) => {
     useCreateFlow.getState().set({ occasion: t.occasion });
@@ -32,7 +33,7 @@ export default function Templates() {
 
   return (
     <Screen glow="violet" contentStyle={{ gap: 14 }}>
-      <TopBar title={occasion ? `${occasionLabel(occasion)} templates` : 'All templates'} step={1} />
+      <TopBar title={occasion ? `${tiles.find((x) => x.id === occasion)?.label ?? occasion} templates` : 'All templates'} step={1} />
 
       <View style={styles.pad}>
         <View style={styles.search}>
@@ -52,7 +53,7 @@ export default function Templates() {
       {!params.occasion ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.hRow}>
           <Chip label="Any occasion" selected={!occasion} onPress={() => setOccasion(undefined)} />
-          {OCCASIONS.filter((o) => !o.soon).map((o) => (
+          {tiles.filter((o) => !o.soon).map((o) => (
             <Chip key={o.id} label={o.label} icon={o.icon} selected={occasion === o.id} onPress={() => setOccasion(o.id)} />
           ))}
         </ScrollView>

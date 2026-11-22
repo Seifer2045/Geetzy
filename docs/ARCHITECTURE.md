@@ -126,6 +126,19 @@ illustrations with react-native-svg, celebration/ambient loops with Lottie.
 (₹29 / ₹49 / ₹99). Each template points to a tier, so prices stay dynamic without
 creating a Play product per template. Server verifies the purchase token.
 
+### ADR-009: Grok writes the movie template JSON, once per template (2026-11-24)
+**Decision:** the admin writes a design brief; **xAI Grok** returns a JSON *movie template* (`templates.movie_json`) that says which photo, text and sound goes where. JSON2Video renders that JSON for every gift. Grok runs only on the admin's "Generate with Grok" click (job `/internal/templates/{id}/movie`, started by the DB trigger like art/preview), never per gift.
+**Format** (`backend/app/video/movie_template.py`): only `image`/`text`/`audio`; pictures and sound only as markers (`{{photo_1}}`, `{{audio}}`, `{{art}}`, `{{background}}`), text markers `{{name}} {{sender}} {{fun_fact}} {{occasion}}`; geometry as fractions of the canvas so one JSON renders at 540x960 and 1080x1920; the backend alone sets size, quality, webhook and export. A scene whose photo number is above the user's photo count is dropped and the rest stretched to keep the length.
+**Safety:** Grok output is untrusted: strict validator (whitelists, no links, size limits), checked again on Save, and again when rendering; if a stored JSON ever fails, the gift uses the built-in design.
+**Cost:** `movie_hash` (same brief + settings = no call), max 2 Grok calls per click (1 retry that shows Grok its errors), daily cap `XAI_CALLS_PER_DAY`, every call logged in `ai_requests` (kind `movie`).
+**Layers:** `providers/xai.py` -> `services/movie_design.py` (generate) · `services/render_body.py` (template JSON or built-in) -> `video/json2video.py`.
+
+### ADR-008: ElevenLabs songs, no Gemini (2026-11-23)
+**Decision:** Gemini (lyrics, Lyria, AI art) and Loudly are removed. AI songs = **ElevenLabs Music**, one call per gift after "Use this song", exactly the video length (15 s), 64 kbps MP3. The admin's *audio prompt* (placeholders `{name} {sender} {fun_fact} {occasion}`) is sent as is; there is no lyrics step. Template art = admin upload, or a free gradient in the template colours (Pillow, no AI).
+**Cost rules:** `song_cache` (same prompt = same MP3, never paid twice) · `render_jobs.input_hash` (identical JSON2Video request is not sent twice) · preview 540×960 medium, HD 1080×1920 only after payment · a template can have its own cropped song (`song_mode='fixed'`, free) · template preview uses that song instead of paying ElevenLabs.
+**Layers:** `app/api/*` (routers) → `app/services/*` + `pipeline.py` (steps) → `app/providers/elevenlabs.py`, `app/video/json2video.py` · `app/studio/*` (admin template jobs).
+**Price:** `templates.custom_price_inr` (optional) is what the app shows and `create_gift` charges; Google Play bills the nearest `price_tiers` tier.
+
 ### ADR-007: Hosted APIs on Vercel + Supabase (replaces Droplet + Redis + FFmpeg + ACE-Step)
 **Status:** Accepted (2026-11-18). Supersedes the hosting/worker parts of ADR-003 and §4 below.
 
@@ -133,8 +146,7 @@ creating a Play product per template. Server verifies the purchase token.
 **Decision:**
 - **API:** Python FastAPI on Vercel (`backend/`).
 - **Data and files:** Supabase Postgres + Storage, schema in `supabase/migrations/`.
-- **Lyrics:** Gemini text.
-- **Song:** Lyria 3 clip (30 s with vocals, our lyrics timed into the first 15 s).
+- **Song:** ElevenLabs Music (see ADR-008; was Gemini lyrics + Lyria, removed 2026-11-23).
 - **Video:** JSON2Video (movie JSON built in code from `templates.render_config`).
 
 **Consequences:**

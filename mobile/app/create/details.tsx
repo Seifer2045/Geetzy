@@ -4,6 +4,7 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import Animated, { LinearTransition } from 'react-native-reanimated';
 import { useTemplate } from '@/api/hooks';
+import { useStartGift } from '@/hooks/useStartGift';
 import { AppText, Badge, Button, Icon, Input, PressableScale, Screen, StickyFooter, STICKY_FOOTER_SPACE, TopBar } from '@/components';
 import { useCreateFlow } from '@/store/createFlow';
 import { colors, enterUp, exitUp, radius, screenPadding, stagger } from '@/theme';
@@ -14,6 +15,8 @@ export default function Details() {
   const slotW = (width - screenPadding * 2 - 20) / 3;
   const slot = { width: slotW, height: slotW * 1.2 };
   const { data: t } = useTemplate(flow.templateId ?? undefined);
+  const { start, isPending, uploading, uploadProgress } = useStartGift();
+  const noSong = t?.songMode === 'none';
   const min = t?.photosMin ?? 3;
   const max = t?.photosMax ?? 5;
   const canAdd = flow.photos.length < max;
@@ -46,7 +49,16 @@ export default function Details() {
         contentStyle={{ gap: 18 }}
         footer={
           <StickyFooter>
-            <Button label="Continue" disabled={!ready} onPress={() => router.push('/create/song')} />
+            {noSong ? (
+              <Button
+                label={uploading ? `Uploading photos… ${Math.round(uploadProgress * 100)}%` : 'Create'}
+                loading={isPending && !uploading}
+                disabled={!ready || isPending}
+                onPress={start}
+              />
+            ) : (
+              <Button label="Continue" disabled={!ready} onPress={() => router.push('/create/song')} />
+            )}
           </StickyFooter>
         }
       >

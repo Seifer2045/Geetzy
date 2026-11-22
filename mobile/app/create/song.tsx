@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
-import { Alert, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 import { router } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
 import Animated from 'react-native-reanimated';
 import Svg, { Path, Rect } from 'react-native-svg';
-import { useLyrics } from '@/api/hooks';
+import { useTemplate } from '@/api/hooks';
 import { recentDeviceAudio as sampleDeviceAudio } from '@/api/mockData';
 import {
   AppText,
@@ -25,7 +24,7 @@ import { env } from '@/config/env';
 import { MOODS, SINGERS } from '@/constants/catalog';
 import { useStartGift } from '@/hooks/useStartGift';
 import { useCreateFlow } from '@/store/createFlow';
-import { colors, enterUp, exitUp, fonts, gradients, radius, screenPadding, stagger } from '@/theme';
+import { colors, enterUp, exitUp, gradients, radius, screenPadding, stagger } from '@/theme';
 import { formatTime } from '@/utils/format';
 import { songTitle } from '@/utils/lyrics';
 
@@ -64,67 +63,15 @@ const Radio = ({ on }: { on: boolean }) => (
   </Svg>
 );
 
-/** Highlights the recipient's name inside the lyrics. */
-const Lyrics = ({ text, name }: { text: string; name: string }) => {
-  const parts = name ? text.split(new RegExp(`(${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'g')) : [text];
-  return (
-    <AppText variant="body" style={{ fontSize: 14, lineHeight: 23 }}>
-      {parts.map((p, i) =>
-        p === name ? (
-          <AppText key={i} variant="body" style={{ color: colors.pinkSoft, fontFamily: fonts.bold, fontSize: 14 }}>
-            {p}
-          </AppText>
-        ) : (
-          p
-        ),
-      )}
-    </AppText>
-  );
-};
-
 // ---------------------------------------------------------------- AI song panel
+// The song is made once, after "Use this song", from the template's audio prompt + your names, mood and singer.
 const AiSongPanel = () => {
   const flow = useCreateFlow();
-  const [editing, setEditing] = useState(false);
   const name = flow.recipientName.trim() || 'Priya';
-
-  const lyricsQuery = useLyrics(
-    flow.templateId
-      ? { templateId: flow.templateId, recipientName: name, funFact: flow.funFact.trim(), mood: flow.mood, singer: flow.singer, version: flow.version }
-      : null,
-  );
-  const generating = lyricsQuery.isFetching;
-  // flow.lyrics = what will be sung (the user may edit it). Copy in newly fetched lyrics, but keep the user's edits.
-  const appliedAt = useRef(flow.lyrics !== null ? lyricsQuery.dataUpdatedAt : 0);
-  useEffect(() => {
-    const data = lyricsQuery.data;
-    if (!data) return;
-    if (lyricsQuery.dataUpdatedAt === appliedAt.current && useCreateFlow.getState().lyrics !== null) return;
-    appliedAt.current = lyricsQuery.dataUpdatedAt;
-    flow.set({ lyrics: data.lyrics });
-  }, [lyricsQuery.data, lyricsQuery.dataUpdatedAt, flow.lyrics]); // eslint-disable-line react-hooks/exhaustive-deps
-  const lyrics = flow.lyrics ?? '';
-  const title = lyricsQuery.data?.title ?? songTitle(name, flow.occasion);
-
-  // A new mood or version means new words. Singer only changes the voice, so keep the lyrics.
-  const recompose = (patch: Parameters<typeof flow.set>[0]) => {
-    setEditing(false);
-    flow.set({ ...patch, lyrics: null });
-  };
-
-  const regenerate = async () => {
-    if (flow.retriesLeft <= 0) {
-      Alert.alert('No re-tries left', 'Pick one of the 3 versions, or change the mood.');
-      return;
-    }
-    setEditing(false);
-    flow.set({ retriesLeft: flow.retriesLeft - 1, lyrics: null });
-    await lyricsQuery.refetch();
-  };
+  const title = songTitle(name, flow.occasion);
 
   return (
     <Animated.View entering={enterUp(0)} exiting={exitUp} style={{ gap: 16 }}>
-      {/* Player */}
       <View style={styles.playerCard}>
         <GradientFill colors={gradients.player} style={StyleSheet.absoluteFill} />
         <View style={styles.playerShine} />
@@ -138,74 +85,14 @@ const AiSongPanel = () => {
               {`${MOODS.find((m) => m.id === flow.mood)?.label} · ${SINGERS.find((s) => s.id === flow.singer)?.label} · 0:15`}
             </AppText>
           </View>
-          <PressableScale onPress={regenerate} disabled={generating} style={styles.regen} accessibilityRole="button" accessibilityLabel="Write new lyrics">
-            <Icon name="refresh" size={18} />
-          </PressableScale>
         </View>
-
         <View style={styles.generating}>
-          {generating ? <Lottie name="equalizer" style={{ width: 72, height: 36 }} /> : <Icon name="music" size={18} color={colors.pinkSoft} />}
+          <Icon name="music" size={18} color={colors.pinkSoft} />
           <AppText variant="caption" color="textSecondary" style={{ flex: 1 }}>
-            {generating
-              ? 'Writing your lyrics…'
-              : lyricsQuery.isError
-                ? 'Could not write the lyrics. Tap ↻ to try again.'
-                : 'We sing these words with your mood and singer. You’ll hear it in the preview.'}
-          </AppText>
-        </View>
-
-        <View style={styles.versions}>
-          {[1, 2, 3].map((v) => {
-            const on = flow.version === v;
-            return (
-              <PressableScale key={v} haptic="selection" onPress={() => !on && recompose({ version: v })} style={[styles.version, on && styles.versionOn]} accessibilityRole="button" accessibilityState={{ selected: on }}>
-                <AppText variant="label" style={{ fontSize: 12, color: on ? colors.ink : colors.textSecondary }}>{`V${v}`}</AppText>
-              </PressableScale>
-            );
-          })}
-          <AppText variant="caption" color="muted" style={{ flex: 1, textAlign: 'right', fontSize: 11 }}>
-            {`3 versions · ${flow.retriesLeft} re-tries left`}
+            {`We make a 15-second song for ${name} with your mood and singer. You’ll hear it in the preview.`}
           </AppText>
         </View>
       </View>
-
-      {/* Lyrics */}
-      <GlassCard tone="soft" rounded={radius.lg + 2} style={{ gap: 8 }}>
-        <View style={styles.lyricsHead}>
-          <AppText variant="overline" color="muted">
-            Lyrics
-          </AppText>
-          <PressableScale
-            onPress={() => {
-              if (editing) flow.set({ lyrics });
-              setEditing((e) => !e);
-            }}
-            style={styles.editBtn}
-            hitSlop={8}
-          >
-            <Icon name={editing ? 'check' : 'edit'} size={14} color={colors.pinkSoft} />
-            <AppText variant="label" color="pinkSoft" style={{ fontSize: 12 }}>
-              {editing ? 'Done' : 'Edit lyrics'}
-            </AppText>
-          </PressableScale>
-        </View>
-        {editing ? (
-          <TextInput
-            value={lyrics}
-            onChangeText={(v) => flow.set({ lyrics: v })}
-            multiline
-            style={styles.lyricsInput}
-            selectionColor={colors.pink}
-            accessibilityLabel="Edit lyrics"
-          />
-        ) : lyrics ? (
-          <Lyrics text={lyrics} name={name} />
-        ) : (
-          <AppText variant="body" color="muted" style={{ fontSize: 14, lineHeight: 23 }}>
-            {generating ? '…' : 'No lyrics yet.'}
-          </AppText>
-        )}
-      </GlassCard>
 
       <View style={{ gap: 10 }}>
         <AppText variant="overline" color="muted">
@@ -213,7 +100,7 @@ const AiSongPanel = () => {
         </AppText>
         <View style={styles.wrap}>
           {MOODS.map((m) => (
-            <Chip key={m.id} label={m.label} icon={m.icon} selected={flow.mood === m.id} onPress={() => flow.mood !== m.id && recompose({ mood: m.id })} />
+            <Chip key={m.id} label={m.label} icon={m.icon} selected={flow.mood === m.id} onPress={() => flow.set({ mood: m.id })} />
           ))}
         </View>
       </View>
@@ -331,7 +218,10 @@ export default function Song() {
   const flow = useCreateFlow();
   const { start, isPending, uploading, uploadProgress } = useStartGift();
 
-  const isUpload = flow.songSource === 'upload';
+  const { data: tpl } = useTemplate(flow.templateId ?? undefined);
+  const mode = tpl?.songMode ?? 'both';
+  // A template can allow only an AI song or only the user's own song.
+  const isUpload = mode === 'upload' || (mode !== 'ai' && flow.songSource === 'upload');
 
   return (
     <Screen
@@ -354,7 +244,7 @@ export default function Song() {
             <Button
               label={uploading ? `Uploading photos… ${Math.round(uploadProgress * 100)}%` : 'Use this song'}
               loading={isPending && !uploading}
-              disabled={!flow.lyrics?.trim() || isPending}
+              disabled={isPending}
               onPress={start}
             />
           )}
@@ -363,6 +253,7 @@ export default function Song() {
     >
       <TopBar title="The song" step={3} />
       <View style={{ paddingHorizontal: screenPadding, gap: 16 }}>
+        {mode === 'both' ? (
         <Animated.View entering={enterUp(stagger(0))}>
           <Segmented
             value={flow.songSource}
@@ -373,6 +264,7 @@ export default function Song() {
             ]}
           />
         </Animated.View>
+        ) : null}
         {isUpload ? <UploadPanel key="upload" /> : <AiSongPanel key="ai" />}
       </View>
     </Screen>
@@ -383,17 +275,10 @@ const styles = StyleSheet.create({
   playerCard: { borderRadius: radius.xxl - 2, padding: 16, gap: 14, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,77,141,0.35)' },
   playerShine: { position: 'absolute', width: 180, height: 180, borderRadius: 90, top: -80, right: -40, backgroundColor: 'rgba(255,77,141,0.18)' },
   playerHead: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  regen: { width: 38, height: 38, borderRadius: 12, backgroundColor: colors.glassStrong, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' },
   playerRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   playBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.text, alignItems: 'center', justifyContent: 'center', paddingLeft: 2 },
   times: { flexDirection: 'row', justifyContent: 'space-between' },
   generating: { height: 54, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  versions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  version: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, backgroundColor: colors.glass, borderWidth: 1, borderColor: colors.border },
-  versionOn: { backgroundColor: colors.text, borderColor: colors.text },
-  lyricsHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  editBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  lyricsInput: { color: colors.text, fontFamily: fonts.medium, fontSize: 14, lineHeight: 23, minHeight: 100, textAlignVertical: 'top', padding: 0 },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   dropzone: {
     alignItems: 'center',

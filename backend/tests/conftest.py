@@ -4,7 +4,6 @@ import os
 os.environ.update(
     SUPABASE_URL="https://example.supabase.co",
     SUPABASE_SECRET_KEY="sb_secret_test",
-    GEMINI_API_KEY="test-gemini",
     JSON2VIDEO_API_KEY="test-j2v",
     INTERNAL_SECRET="internal-test",
     WEBHOOK_SECRET="webhook-test",

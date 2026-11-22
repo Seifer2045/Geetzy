@@ -1,13 +1,16 @@
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Alert } from 'react-native';
 import { router } from 'expo-router';
-import { useCreateGift } from '@/api/hooks';
+import { queryKeys, useCreateGift } from '@/api/hooks';
+import type { Template } from '@/api/types';
 import { uploadGiftFiles } from '@/api/upload';
 import { useCreateFlow } from '@/store/createFlow';
 
 /** Uploads the photos (and own song), sends the draft to the API and opens the Making screen. */
 export const useStartGift = () => {
   const mutation = useCreateGift();
+  const queryClient = useQueryClient();
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
 
@@ -20,7 +23,9 @@ export const useStartGift = () => {
     try {
       setUploading(true);
       setUploadProgress(0);
-      const ownSong = s.songSource === 'upload' && s.upload ? { uri: s.upload.uri, name: s.upload.name } : null;
+      // Photo templates (and silent videos) have no song at all. The template is already cached by the details screen.
+      const silent = queryClient.getQueryData<Template>(queryKeys.template(s.templateId))?.songMode === 'none';
+      const ownSong = !silent && s.songSource === 'upload' && s.upload ? { uri: s.upload.uri, name: s.upload.name } : null;
       const files = await uploadGiftFiles(
         s.photos.map((p) => p.uri),
         ownSong,
@@ -34,7 +39,7 @@ export const useStartGift = () => {
         senderName: s.senderName.trim(),
         funFact: s.funFact.trim(),
         photoPaths: files.photoPaths,
-        song: s.songPayload(files.songPath),
+        song: silent ? null : s.songPayload(files.songPath),
       });
       s.set({ giftId: gift.id });
       router.push({ pathname: '/create/making', params: { giftId: gift.id } });

@@ -1,6 +1,5 @@
 import pytest
 
-from app.ai.gemini import song_prompt
 from app.video.json2video import TRANSITION_SEC, MovieInput, build_movie
 
 
@@ -56,9 +55,3 @@ def test_captions_name_sender_and_lyrics():
 def test_needs_photos():
     with pytest.raises(ValueError):
         movie(photos=0)
-
-
-def test_song_prompt_times_the_lyrics():
-    p = song_prompt(style="genz", mood="party", singer="duet", lyrics="Hey Priya\nyou rock\n\nso fun\nPriya!")
-    assert "[0:00 - 0:15] Chorus:\nHey Priya\nyou rock\nso fun\nPriya!" in p
-    assert "duet" in p

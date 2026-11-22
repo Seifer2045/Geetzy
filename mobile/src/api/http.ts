@@ -1,6 +1,6 @@
 import { getSupabase } from '@/auth/supabase';
 import { env } from '@/config/env';
-import type { AiSong, CreateGiftInput, Gift, LibraryItem, LyricsInput, Template, TemplateQuery } from './types';
+import type { Category, CreateGiftInput, Gift, LibraryItem, Template, TemplateQuery } from './types';
 
 export class ApiError extends Error {
   constructor(
@@ -47,9 +47,10 @@ const qs = (params: Record<string, string | undefined>) => {
 
 /** Real backend (FastAPI on Vercel). Same shape as mockApi. */
 export const httpApi = {
-  listTemplates: (q: TemplateQuery = {}) => request<Template[]>(`/templates${qs({ occasion: q.occasion, style: q.style, q: q.q })}`),
+  listTemplates: (q: TemplateQuery = {}) =>
+    request<Template[]>(`/templates${qs({ occasion: q.occasion, category: q.category, outputType: q.outputType, style: q.style, q: q.q })}`),
+  listCategories: (outputType?: string) => request<Category[]>(`/categories${qs({ outputType })}`),
   getTemplate: (id: string) => request<Template>(`/templates/${id}`),
-  generateLyrics: (input: LyricsInput) => request<AiSong>('/lyrics', { method: 'POST', body: JSON.stringify(input) }),
   createGift: (input: CreateGiftInput) => request<Gift>('/gifts', { method: 'POST', body: JSON.stringify(input) }),
   getGift: (id: string) => request<Gift>(`/gifts/${id}`),
   verifyPayment: (giftId: string) => request<Gift>('/payments/verify', { method: 'POST', body: JSON.stringify({ giftId }) }),

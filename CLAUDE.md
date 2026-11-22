@@ -18,6 +18,7 @@ User picks a template → adds 3–5 photos + names + a fun fact → AI song (or
 D:\TestApp
 ├─ mobile/    Expo app (expo-router, TypeScript)  ← main work
 ├─ backend/   FastAPI API, deployed to Vercel (data in Supabase)
+├─ admin/     Next.js admin dashboard (own Vercel project) — users, credits, templates, categories, API keys. Setup: docs/ADMIN_SETUP.md
 ├─ supabase/  migrations/ (schema, RLS, storage, pg_net/pg_cron) + seed.sql (tiers, templates)
 └─ docs/      ARCHITECTURE.md, DESIGN_SYSTEM.md, SESSION_HANDOFF.md, GOOGLE_SIGNIN_SETUP.md, BACKEND_SETUP.md
 ```
@@ -40,7 +41,7 @@ Switch app to backend: `mobile/.env` → `EXPO_PUBLIC_USE_MOCK=false`, `EXPO_PUB
 
 ## Status (as of 2026-11-18)
 - Installed on **Expo SDK 58** (React 19.3, RN 0.88). `tsc` clean, `expo-doctor` 20/20. Dev build compiles (`app-debug.apk`).
-- **Real backend written, not deployed yet** (see `docs/BACKEND_SETUP.md`). Waiting on: Supabase secret key + run migration/seed, Google billing for Lyria, Vercel login/deploy, Vault secrets. Verified: Gemini lyrics work, JSON2Video render works (15 s, 540×960, ~23 s), backend `pytest` 16/16.
+- **Backend deployed (2026-11-19): https://geetzy-api.vercel.app** (Vercel project `seifer2045/geetzy-api`, deployed from `backend/` with `vercel --prod`; `/health` + `/templates` OK). Supabase migration + seed done. Still open: Vault secrets (`backend_url`, `internal_secret`), `ELEVENLABS_API_KEY`. Verified: JSON2Video render works (15 s, 540×960, ~23 s), backend `pytest` 16/16.
 - Done: animated splash, Login, Home, Explore, Library, Profile, create flow: `templates → template/[id] (name, ID, dynamic price) → details (photos) → song (AI | upload) → trim → making → preview & pay`.
 - **Google sign-in = Supabase Auth** (native `@react-native-google-signin/google-signin` → `supabase.auth.signInWithIdToken`). Code: `src/auth/`, `src/store/auth.ts`. Setup steps: `docs/GOOGLE_SIGNIN_SETUP.md`. Real only when the 3 `EXPO_PUBLIC_SUPABASE_*`/`GOOGLE_WEB_CLIENT_ID` keys are set in `mobile/.env`; otherwise mock. Needs the dev build (not Expo Go).
 - Mocked: phone OTP (Supabase phone auth needs an SMS provider), payments (`ALLOW_FAKE_PAYMENTS=true` on the server), uploaded song duration (assumed 180 s), sharing (text only, not the video file). Mock mode (`EXPO_PUBLIC_USE_MOCK=true`) still works fully offline.
@@ -52,8 +53,9 @@ Switch app to backend: `mobile/.env` → `EXPO_PUBLIC_USE_MOCK=false`, `EXPO_PUB
 - API layer: screens only call `src/api/hooks.ts` → `src/api/client.ts` (mock or http). Contract: `src/api/types.ts` ↔ `backend/app/schemas.py` (camelCase on the wire). Keep both in sync.
 - **Backend = Python FastAPI on Vercel** (decided 2026-11-18; replaces DigitalOcean + Redis + FFmpeg worker). **DB + files = Supabase** Postgres + Storage (`gift-uploads` written by the app under `{userId}/`, `gift-media` written by the backend). RLS on everywhere; the app reads data only through the API (backend uses the secret key).
 - No background work on Vercel Python: **Supabase starts every step** (insert trigger → `pg_net` → `/internal/gifts/{id}/run`; `pg_cron` every minute → `/internal/sweep`; JSON2Video webhook → `/webhooks/json2video`). Pipeline steps must stay idempotent. URL + secret live in Supabase Vault.
-- **Lyrics = Gemini text** (`gemini-flash-latest`, fallback `gemini-flash-lite-latest`). **Song = Lyria 3** (`lyria-3-clip-preview`, 30 s MP3, Interactions API), made **once after "Use this song"** (song screen shows lyrics only). Never MusicGen (CC-BY-NC).
-  **Temporary (2026-11-19): Loudly** (`backend/app/ai/loudly.py`, instrumental only, lyrics shown as text) is the default via `SONG_PROVIDER=loudly` + `LOUDLY_API_KEY`; set `SONG_PROVIDER=lyria` to go back. Loudly endpoint/fields written from memory (docs are login-only) — verify on first real call.
+- **Song = ElevenLabs Music** (`backend/app/providers/elevenlabs.py`, 15 s MP3, `ELEVENLABS_API_KEY`), made **once per gift after "Use this song"** from the template's admin *audio prompt*; cached in `song_cache`. **No Gemini, no lyrics step, no Lyria/Loudly** (removed 2026-11-23, see ADR-008). Endpoint/fields written from memory — verify on first real call. Never MusicGen (CC-BY-NC).
+- **Video design = Grok (xAI) JSON, once per template** (`backend/app/services/movie_design.py`, `video/movie_template.py`, ADR-009): admin brief -> Grok -> validated JSON movie template with markers (`{{photo_1}}`, `{{name}}`, `{{audio}}`) -> JSON2Video renders it for every gift. Never called per gift. Keys `XAI_API_KEY`, `ELEVENLABS_API_KEY` live only in the backend env (see docs/ADMIN_SETUP.md). xAI endpoint/model written from memory - verify on first call.
+- **Templates are built in the admin** (`/templates/new`, docs/ADMIN_SETUP.md): video text prompt, audio prompt, min/max photos, category, optional own song (cropped window), optional custom price (Play bills nearest tier), optional background upload. A published template shows in the app under its category automatically. Backend is layered: `app/api/*` routers → `services/` + `pipeline.py` → `providers/`.
 - **Video = JSON2Video** (movie JSON built in `backend/app/video/json2video.py` from `templates.render_config`; 9:16, preview 540×960 with "GEETZY · PREVIEW" watermark, HD 1080×1920 only **after payment**). Own song is trimmed by the audio `seek` property, no FFmpeg. Video is never rendered on the phone.
 - Payments: Google Play Billing consumables mapped to **price tiers** (₹29/₹39/₹49/₹99, table `price_tiers`); template points to a tier.
 

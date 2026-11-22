@@ -1,4 +1,4 @@
-"""Gift pipeline: lyrics → Lyria song → JSON2Video preview → (after payment) HD.
+"""Gift pipeline: ElevenLabs song → JSON2Video preview → (after payment) HD.
 
 Nothing here runs "in the background" on Vercel. Each step is started by an HTTP call:
 - new gift row → Supabase trigger (pg_net) → POST /internal/gifts/{id}/run → run_gift()
@@ -6,16 +6,24 @@ Nothing here runs "in the background" on Vercel. Each step is started by an HTTP
 - every minute → Supabase pg_cron → POST /internal/sweep → sweep() (retries + safety net)
 All functions are safe to call twice.
 """
+import hashlib
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 
 import httpx
 
-from .ai import gemini, loudly
-from .ai.gemini import EST_COST_LYRICS_USD, write_lyrics
 from .config import get_settings
-from .db import MEDIA_BUCKET, UPLOADS_BUCKET, db, one, signed_url, upload_bytes
-from .video.json2video import MovieInput, build_movie, create_movie, get_movie
+from .db import MEDIA_BUCKET, TEMPLATE_BUCKET, UPLOADS_BUCKET, db, one, public_url, signed_url, upload_bytes
+from .placeholders import fill
+from .providers import elevenlabs
+from .services.songs import get_or_make_song
+from .studio import service as studio_service
+from .studio.compose import compose_image
+from .studio.layouts import get_layout
+from .services.render_body import movie_body
+from .video.json2video import create_movie, get_movie, split_video_prompt
+from .video.watermark import make_preview
 
 log = logging.getLogger("geetzy.pipeline")
 
@@ -59,10 +67,14 @@ def _set_status(gift_id: str, status: str, **fields) -> None:
     _update_gift(gift_id, status=status, progress=PROGRESS[status], **fields)
 
 
-def _log_ai(user_id: str, gift_id: str | None, kind: str, model: str, cost: float) -> None:
-    db().table("ai_requests").insert(
-        {"user_id": user_id, "gift_id": gift_id, "kind": kind, "model": model, "est_cost_usd": cost}
-    ).execute()
+def _log_ai(
+    user_id: str, gift_id: str | None, kind: str, model: str, cost: float, *,
+    provider: str | None = None, ok: bool = True, latency_ms: int | None = None, error: str | None = None,
+) -> None:
+    db().table("ai_requests").insert({
+        "user_id": user_id, "gift_id": gift_id, "kind": kind, "model": model, "est_cost_usd": cost,
+        "provider": provider, "ok": ok, "latency_ms": latency_ms, "error": (error or None) and error[:300],
+    }).execute()
 
 
 # ───────────────────────────────────────────────────────────── step 1+2: song, then preview render
@@ -77,7 +89,7 @@ def run_gift(gift_id: str) -> str:
     # Claim it (only one runner wins, even if trigger and sweep fire together).
     claimed = one(
         db().table("gifts")
-        .update({"status": "writing_lyrics", "progress": PROGRESS["writing_lyrics"], "attempts": g["attempts"] + 1})
+        .update({"status": "composing", "progress": PROGRESS["composing"], "attempts": g["attempts"] + 1})
         .eq("id", gift_id).eq("status", "queued").eq("attempts", g["attempts"])
         .execute()
     )
@@ -95,82 +107,124 @@ def run_gift(gift_id: str) -> str:
 
 
 def _make_song_and_render(g: dict) -> None:
-    s = get_settings()
     song = one(db().table("gift_songs").select("*").eq("gift_id", g["id"]).execute())
     tpl = one(db().table("templates").select("*").eq("id", g["template_id"]).execute())
-    if not song or not tpl:
-        raise RuntimeError("Gift is missing its song or template")
+    if not tpl:
+        raise RuntimeError("Gift is missing its template")
 
-    if song["source"] == "ai":
-        if not song["lyrics"]:
-            res = write_lyrics(occasion=g["occasion"], name=g["recipient_name"], fun_fact=g["fun_fact"],
-                               mood=song["mood"], version=song["version"] or 1)
-            _log_ai(g["user_id"], g["id"], "lyrics", s.gemini_text_model, EST_COST_LYRICS_USD)
-            db().table("gift_songs").update({"lyrics": res.lyrics, "title": res.title}).eq("gift_id", g["id"]).execute()
-            song = {**song, "lyrics": res.lyrics, "title": res.title}
+    if tpl["output_type"] == "image":  # photo template: one picture, no song, no JSON2Video
+        if not (tpl.get("layout_id") and tpl.get("art_status") == "ready" and tpl.get("art_bg_path")):
+            raise RuntimeError("This photo template is not ready (no art)")
+        _compose_photo_template(g, tpl)
+        return
+    mode = tpl["song_mode"]
+    if mode not in ("none", "fixed") and not song:
+        raise RuntimeError("Gift is missing its song")
+    song = song if mode not in ("none", "fixed") else None
 
-        if not song["audio_path"]:  # a retry after a failed render reuses the song
-            _set_status(g["id"], "composing")
-            audio, model, cost = _compose(tpl["style"], song)
-            _log_ai(g["user_id"], g["id"], "song", model, cost)
-            path = upload_bytes(MEDIA_BUCKET, f"{g['user_id']}/{g['id']}/song.mp3", audio, "audio/mpeg")
-            db().table("gift_songs").update({"audio_path": path, "model": model}).eq("gift_id", g["id"]).execute()
-            song = {**song, "audio_path": path}
+    if song and song["source"] == "ai" and not song["audio_path"]:  # a retry after a failed render reuses the song
+        _set_status(g["id"], "composing")
+        # The admin's audio prompt with {name} {sender} {fun_fact} {occasion} replaced for THIS gift.
+        direction = fill(tpl.get("song_prompt") or tpl.get("prompt") or "", name=g["recipient_name"], sender=g["sender_name"],
+                         fun_fact=g["fun_fact"], occasion=g["occasion"])
+        prompt = elevenlabs.build_prompt(direction=direction, style=tpl["style"], mood=song["mood"] or "happy",
+                                         singer=song["singer"] or "female", seconds=tpl["duration_sec"])
+        path, _cached = get_or_make_song(
+            prompt, seconds=tpl["duration_sec"], instrumental=bool(tpl.get("song_instrumental")),
+            on_made=lambda ms, ok, err: _log_ai(g["user_id"], g["id"], "song", get_settings().elevenlabs_model,
+                                                elevenlabs.EST_COST_SONG_USD if ok else 0.0, provider="elevenlabs",
+                                                ok=ok, latency_ms=ms, error=err),
+        )
+        db().table("gift_songs").update({"audio_path": path, "model": get_settings().elevenlabs_model}).eq("gift_id", g["id"]).execute()
+        song = {**song, "audio_path": path}
 
     _set_status(g["id"], "rendering", error=None)
     start_render(g, "preview", song=song, tpl=tpl)
 
 
-def _compose(style: str, song: dict) -> tuple[bytes, str, float]:
-    """MP3 bytes + model name + estimated cost, from the provider set in SONG_PROVIDER."""
-    s = get_settings()
-    if s.song_provider == "lyria":
-        prompt = gemini.song_prompt(style=style, mood=song["mood"], singer=song["singer"], lyrics=song["lyrics"])
-        return gemini.compose_song(prompt), s.lyria_model, gemini.EST_COST_SONG_USD
-    prompt = loudly.music_prompt(style=style, mood=song["mood"])
-    return loudly.compose_song(prompt), "loudly", loudly.EST_COST_SONG_USD
+# ───────────────────────────────────────────────────────────── photo templates (styled still image)
+def _compose_photo_template(g: dict, tpl: dict) -> None:
+    """Template Studio photo template: the user's photos go into the layout's slots on the template art (Pillow only)."""
+    layout = get_layout(tpl["layout_id"])
+    if not layout:
+        raise RuntimeError("Template layout not found")
+    _set_status(g["id"], "composing")
+    photos = db().table("gift_photos").select("storage_path").eq("gift_id", g["id"]).order("position").execute().data
+    raw: list[bytes] = []
+    for p in photos:
+        url = signed_url(UPLOADS_BUCKET, p["storage_path"])
+        if url:
+            r = httpx.get(url, timeout=60)
+            r.raise_for_status()
+            raw.append(r.content)
+    if not raw:
+        raise RuntimeError("Photos not found in storage")
+    bg = httpx.get(public_url(TEMPLATE_BUCKET, tpl["art_bg_path"]), timeout=60)
+    bg.raise_for_status()
+    full = compose_image(bg.content, layout.slots, raw, recipient=g["recipient_name"], sender=g["sender_name"], occasion=g["occasion"])
+
+    base = f"{g['user_id']}/{g['id']}"
+    full_path = upload_bytes(MEDIA_BUCKET, f"{base}/full.jpg", full, "image/jpeg")
+    preview_path = upload_bytes(MEDIA_BUCKET, f"{base}/preview.jpg", make_preview(full), "image/jpeg")
+    # hd_url is only returned to the app once the gift is paid, so storing hd_path now is safe.
+    _set_status(g["id"], "preview_ready", preview_path=preview_path, hd_path=full_path, error=None)
+    db().rpc("increment_made_count", {"p_template_id": g["template_id"]}).execute()
 
 
 # ───────────────────────────────────────────────────────────── rendering
 def start_render(g: dict, kind: str, *, song: dict | None = None, tpl: dict | None = None) -> str:
     s = get_settings()
-    song = song or one(db().table("gift_songs").select("*").eq("gift_id", g["id"]).execute())
     tpl = tpl or one(db().table("templates").select("*").eq("id", g["template_id"]).execute())
-    if not song or not tpl:
-        raise RuntimeError("Gift is missing its song or template")
+    if not tpl:
+        raise RuntimeError("Gift is missing its template")
+    mode = tpl["song_mode"]
+    silent = mode == "none"
+    fixed = mode == "fixed"  # the template's own cropped song, same for every gift (no AI cost)
+    song = None if (silent or fixed) else (song or one(db().table("gift_songs").select("*").eq("gift_id", g["id"]).execute()))
+    if not silent and not fixed and not song:
+        raise RuntimeError("Gift is missing its song")
 
     photos = db().table("gift_photos").select("storage_path").eq("gift_id", g["id"]).order("position").execute().data
     photo_urls = [u for p in photos if (u := signed_url(UPLOADS_BUCKET, p["storage_path"]))]
-    if song["source"] == "ai":
-        audio_url, seek = signed_url(MEDIA_BUCKET, song["audio_path"]), 0.0
+    audio_url: str | None = None
+    audio_ref, seek, lines, fade = "", 0.0, [], bool(song["fade"]) if song else False
+    if fixed:
+        audio_ref, seek, fade = tpl["default_song_path"], float(tpl.get("default_song_start_sec") or 0), True
+        audio_url = public_url(TEMPLATE_BUCKET, audio_ref)
+    elif song and song["source"] == "ai":
+        audio_ref = song["audio_path"]
+        audio_url = signed_url(MEDIA_BUCKET, audio_ref)
         lines = [line for line in (song["lyrics"] or "").splitlines() if line.strip()]
-    else:
-        audio_url, seek = signed_url(UPLOADS_BUCKET, song["upload_path"]), float(song["trim_start_sec"] or 0)
-        lines = []
-    if not audio_url or not photo_urls:
+    elif song:
+        audio_ref, seek = song["upload_path"], float(song["trim_start_sec"] or 0)
+        audio_url = signed_url(UPLOADS_BUCKET, audio_ref)
+    if ((song or fixed) and not audio_url) or not photo_urls:
         raise RuntimeError("Song or photos not found in storage")
 
-    job = one(db().table("render_jobs").insert({"gift_id": g["id"], "kind": kind}).execute())
+    # Template Studio video: photos go into the frame, the art overlay (transparent hole) sits on top.
+    layout = get_layout(tpl["layout_id"]) if tpl.get("layout_id") else None
+    studio_art = public_url(TEMPLATE_BUCKET, tpl.get("art_path")) if layout and tpl.get("art_status") == "ready" else None
+    # Admin's video prompt → opening headline (line 1) and closing caption (line 2).
+    headline, closing = split_video_prompt(fill(tpl.get("video_prompt") or "", name=g["recipient_name"], sender=g["sender_name"],
+                                                fun_fact=g["fun_fact"], occasion=g["occasion"]))
+
+    # Never pay JSON2Video twice for the exact same request (retry, double webhook, sweep racing the trigger).
+    fingerprint = hashlib.sha256(json.dumps(
+        [kind, [p["storage_path"] for p in photos], audio_ref, seek, tpl["updated_at"], headline, closing, g["recipient_name"], g["sender_name"]],
+        sort_keys=True).encode()).hexdigest()
+    twin = one(db().table("render_jobs").select("id").eq("gift_id", g["id"]).eq("kind", kind).eq("input_hash", fingerprint)
+               .in_("status", ["pending", "running"]).limit(1).execute())
+    if twin:
+        return twin["id"]
+
+    job = one(db().table("render_jobs").insert({"gift_id": g["id"], "kind": kind, "input_hash": fingerprint}).execute())
     webhook = f"{s.base_url}/webhooks/json2video?secret={s.webhook_secret}&job={job['id']}"
-    body = build_movie(
-        MovieInput(
-            kind=kind,  # type: ignore[arg-type]
-            occasion=g["occasion"],
-            style=tpl["style"],
-            recipient_name=g["recipient_name"],
-            sender_name=g["sender_name"],
-            photo_urls=photo_urls,
-            audio_url=audio_url,
-            audio_seek=seek,
-            fade=bool(song["fade"]),
-            lyric_lines=lines,
-            color_from=tpl["color_from"],
-            color_to=tpl["color_to"],
-            render_config=tpl["render_config"] or {},
-            duration_sec=tpl["duration_sec"],
-        ),
-        webhook_url=webhook,
-        client_data={"giftId": g["id"], "jobId": job["id"], "kind": kind},
+    body = movie_body(
+        tpl, kind=kind, occasion=g["occasion"], recipient=g["recipient_name"], sender=g["sender_name"], fun_fact=g["fun_fact"],
+        photo_urls=photo_urls, audio_url=audio_url, audio_seek=seek, fade=fade, lyric_lines=lines, art_url=studio_art,
+        background_url=public_url(TEMPLATE_BUCKET, tpl.get("art_bg_path")) if tpl.get("art_status") == "ready" else None,
+        slot=layout.slots[0] if studio_art and layout else None, watermark=True, webhook_url=webhook,
+        client_data={"giftId": g["id"], "jobId": job["id"], "kind": kind}, headline=headline, closing=closing,
     )
     try:
         project = create_movie(body)
@@ -213,12 +267,16 @@ def on_render_done(job_id: str, *, success: bool, video_url: str | None, error: 
 
 
 # ───────────────────────────────────────────────────────────── payment → HD
-def mark_paid(g: dict, *, provider: str, purchase_token: str | None) -> None:
+def mark_paid(g: dict, *, provider: str, purchase_token: str | None, amount_inr: int | None = None) -> None:
+    """provider "credit" = the admin granted free videos: nothing is charged (amount 0)."""
     db().table("payments").insert({
         "gift_id": g["id"], "user_id": g["user_id"], "provider": provider, "purchase_token": purchase_token,
-        "amount_inr": g["price_inr"], "status": "verified", "verified_at": _now().isoformat(),
+        "amount_inr": g["price_inr"] if amount_inr is None else amount_inr,
+        "status": "verified", "verified_at": _now().isoformat(),
     }).execute()
     _set_status(g["id"], "paid")
+    if g.get("hd_path"):  # photo templates already have the full-size file
+        return
     try:
         start_render({**g, "status": "paid"}, "hd")
     except Exception:  # noqa: BLE001 — sweep() retries the HD render
@@ -274,4 +332,9 @@ def sweep() -> dict[str, int]:
             done["hd_started"] += 1
         except Exception:  # noqa: BLE001
             log.exception("HD render for %s not started", g["id"])
+    try:
+        for k, v in studio_service.sweep_templates().items():
+            done[f"templates_{k}"] = v
+    except Exception:  # noqa: BLE001 — never let template housekeeping break the gift safety net
+        log.exception("template sweep failed")
     return done

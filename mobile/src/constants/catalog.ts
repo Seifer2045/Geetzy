@@ -8,6 +8,10 @@ export const OCCASIONS: { id: Occasion; label: string; icon: IconName; colors: r
   { id: 'festival', label: 'Festivals', icon: 'diya', colors: ['#FFC857', '#E07A00'], soon: true },
 ];
 
+const CATEGORY_ICONS: Record<string, IconName> = { birthday: 'cake', anniversary: 'heart', apology: 'chatHeart', festival: 'diya' };
+/** Icon for a category slug; new admin-made categories use the sparkle (or their emoji where shown). */
+export const categoryIcon = (slug: string): IconName => CATEGORY_ICONS[slug] ?? 'sparkle';
+
 export const occasionLabel = (o: Occasion) => OCCASIONS.find((x) => x.id === o)?.label ?? o;
 
 export const STYLES: { id: TemplateStyle; label: string; icon: IconName; colors: readonly [string, string]; count: number }[] = [

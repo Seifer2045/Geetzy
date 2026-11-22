@@ -9,10 +9,13 @@ from typing import Any, Literal
 import httpx
 
 from ..config import get_settings
+from ..studio.layouts import Slot
 
 API = "https://api.json2video.com/v2/movies"
 TRANSITION_SEC = 0.6
 SIZES = {"preview": (540, 960), "hd": (1080, 1920)}  # vertical 9:16 for WhatsApp Status / Reels
+HORIZONTAL_SIZES = {"preview": (960, 540), "hd": (1920, 1080)}  # 16:9
+HORIZONTAL_TEXT_SCALE = 0.55  # vw units are relative to the (wider) width, so text shrinks
 PANS = ["right", "left", "top", "bottom"]
 
 HEADLINE = {
@@ -42,7 +45,7 @@ class MovieInput:
     recipient_name: str
     sender_name: str
     photo_urls: list[str]
-    audio_url: str
+    audio_url: str | None = None  # None = silent video (template song mode "none")
     audio_seek: float = 0.0
     fade: bool = True
     lyric_lines: list[str] = field(default_factory=list)
@@ -50,6 +53,14 @@ class MovieInput:
     color_to: str = "#0A0A0F"
     render_config: dict[str, Any] = field(default_factory=dict)
     duration_sec: int = 15
+    orientation: Literal["vertical", "horizontal"] = "vertical"
+    # Template Studio "slot mode": photos sit in `slot`, the art PNG (transparent hole) is laid over them.
+    art_url: str | None = None
+    slot: Slot | None = None
+    watermark: bool = True  # False for the admin's template preview
+    # Admin's "video prompt", already filled with the names: line 1 = opening headline, line 2 = closing caption.
+    headline: str = ""
+    closing: str = ""
 
 
 def _text(text: str, *, font: str, size_vw: float, y: int, w: int, h: int, style: str, color: str = "#FFFFFF") -> dict:
@@ -78,55 +89,70 @@ def _text(text: str, *, font: str, size_vw: float, y: int, w: int, h: int, style
 def build_movie(m: MovieInput, *, webhook_url: str, client_data: dict[str, str]) -> dict:
     if not m.photo_urls:
         raise ValueError("At least one photo is needed")
-    width, height = SIZES[m.kind]
+    horizontal = m.orientation == "horizontal"
+    width, height = (HORIZONTAL_SIZES if horizontal else SIZES)[m.kind]
+    k = HORIZONTAL_TEXT_SCALE if horizontal else 1.0
     cfg = {**STYLE_DEFAULTS.get(m.style, STYLE_DEFAULTS["bollywood"]), **m.render_config}
     font, transition, text_style = cfg["font"], cfg["transition"], cfg["textStyle"]
 
     n = len(m.photo_urls)
     # Transitions overlap scenes, so each scene is a bit longer to keep the total at duration_sec.
     scene_sec = round((m.duration_sec + (n - 1) * TRANSITION_SEC) / n, 3)
-    caption_box_h = int(height * 0.28)
-    caption_y = int(height * 0.62)
+    caption_box_h = int(height * (0.3 if horizontal else 0.28))
+    caption_y = int(height * (0.66 if horizontal else 0.62))
 
+    slot_mode = bool(m.art_url and m.slot)
     scenes = []
     for i, url in enumerate(m.photo_urls):
-        elements: list[dict] = [
-            {
-                "type": "image",
-                "src": url,
-                "resize": "cover",
-                "position": "center-center",
-                "zoom": 2,
-                "pan": PANS[i % len(PANS)],
-                "duration": -2,
+        if slot_mode:
+            left, top, slot_w, slot_h = m.slot.px((width, height))  # type: ignore[union-attr]
+            photo: dict = {
+                "type": "image", "src": url, "resize": "cover", "position": "custom",
+                "x": left, "y": top, "width": slot_w, "height": slot_h,
+                "zoom": 2, "pan": PANS[i % len(PANS)], "duration": -2, "z-index": 1,
             }
-        ]
+        else:
+            photo = {
+                "type": "image", "src": url, "resize": "cover", "position": "center-center",
+                "zoom": 2, "pan": PANS[i % len(PANS)], "duration": -2,
+            }
+        elements: list[dict] = [photo]
         if i == 0:
-            headline = HEADLINE.get(m.occasion, "For {name}").format(name=m.recipient_name)
-            elements.append(_text(headline, font=font, size_vw=9, y=caption_y, w=width, h=caption_box_h, style=text_style))
+            headline = m.headline or HEADLINE.get(m.occasion, "For {name}").format(name=m.recipient_name)
+            elements.append(_text(headline, font=font, size_vw=9 * k, y=caption_y, w=width, h=caption_box_h, style=text_style))
         elif i == n - 1:
-            elements.append(_text(f"With love, {m.sender_name}", font=font, size_vw=7, y=caption_y, w=width, h=caption_box_h, style="002"))
+            closing = m.closing or f"With love, {m.sender_name}"
+            elements.append(_text(closing, font=font, size_vw=7 * k, y=caption_y, w=width, h=caption_box_h, style="002"))
         elif i - 1 < len(m.lyric_lines):
-            elements.append(_text(m.lyric_lines[i - 1], font=font, size_vw=6, y=caption_y, w=width, h=caption_box_h, style="002"))
+            elements.append(_text(m.lyric_lines[i - 1], font=font, size_vw=6 * k, y=caption_y, w=width, h=caption_box_h, style="002"))
 
+        if slot_mode:  # captions above the art overlay
+            for el in elements:
+                if el["type"] == "text":
+                    el["z-index"] = 20
         scene: dict[str, Any] = {"background-color": m.color_to, "duration": scene_sec, "elements": elements}
         if i > 0:
             scene["transition"] = {"style": transition, "duration": TRANSITION_SEC}
         scenes.append(scene)
 
-    movie_elements: list[dict] = [
-        {
+    movie_elements: list[dict] = []
+    if m.audio_url:
+        movie_elements.append({
             "type": "audio",
             "src": m.audio_url,
             "seek": round(m.audio_seek, 2),  # skip into the song (own song trim)
             "duration": m.duration_sec,
             "fade-in": 0.3 if m.fade and m.audio_seek > 0 else 0,
             "fade-out": 1.2 if m.fade else 0,
-        }
-    ]
-    if m.kind == "preview":
+        })
+    if slot_mode:
+        movie_elements.append({
+            "type": "image", "src": m.art_url, "resize": "cover", "position": "center-center",
+            "width": width, "height": height, "duration": -2, "z-index": 10,
+        })
+    if m.kind == "preview" and m.watermark:
         movie_elements.append(
-            _text("GEETZY · PREVIEW", font="Poppins", size_vw=8, y=int(height * 0.08), w=width, h=int(height * 0.1),
+            _text("GEETZY · PREVIEW", font="Poppins", size_vw=8 * k, y=int(height * 0.08), w=width, h=int(height * 0.1),
                   style="001", color="rgba(255,255,255,0.45)") | {"duration": -2, "z-index": 50}
         )
 
@@ -141,6 +167,12 @@ def build_movie(m: MovieInput, *, webhook_url: str, client_data: dict[str, str])
         "elements": movie_elements,
         "exports": [{"destinations": [{"type": "webhook", "endpoint": webhook_url}]}],
     }
+
+
+def split_video_prompt(filled: str) -> tuple[str, str]:
+    """(headline, closing) from the admin's video prompt. Line 1 = opening, line 2 = closing; empty = defaults."""
+    lines = [ln.strip() for ln in (filled or "").splitlines() if ln.strip()]
+    return (lines[0][:80] if lines else ""), (lines[1][:80] if len(lines) > 1 else "")
 
 
 def _headers() -> dict[str, str]:

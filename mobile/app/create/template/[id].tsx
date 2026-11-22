@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ActivityIndicator, ScrollView, Share, StyleSheet, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
+import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated from 'react-native-reanimated';
@@ -54,7 +55,7 @@ export default function TemplatePreview() {
   const facts: { icon: IconName; value: string; label: string }[] = [
     { icon: 'clock', value: `${t.durationSec} sec`, label: 'Length' },
     { icon: 'image', value: `${t.photosMin}–${t.photosMax}`, label: 'Photos' },
-    { icon: 'music', value: 'AI song', label: 'Music' },
+    { icon: 'music', value: t.songMode === 'upload' ? 'Your song' : t.songMode === 'none' ? 'Built-in' : t.songMode === 'ai' ? 'AI song' : 'AI or yours', label: 'Music' },
     { icon: 'film', value: '1080p', label: 'Quality' },
   ];
 
@@ -76,6 +77,8 @@ export default function TemplatePreview() {
         {/* Video preview (gradient stand-in until previewUrl exists) */}
         <View style={{ height: HERO_H + insets.top }}>
           <LinearGradient colors={t.colors} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={StyleSheet.absoluteFill} />
+          {/* Template art (videos) or the finished sample picture (photo templates), 9:16 */}
+          {t.thumbUrl ? <Image source={{ uri: t.thumbUrl }} contentFit="cover" style={StyleSheet.absoluteFill} accessibilityIgnoresInvertColors /> : null}
           <View style={styles.heroShine} />
           <LinearGradient
             colors={['rgba(0,0,0,0.35)', 'rgba(0,0,0,0)', 'rgba(10,10,15,0)', colors.bg]}

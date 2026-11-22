@@ -3,7 +3,7 @@ import { ActivityIndicator, ScrollView, StyleSheet, TextInput, useWindowDimensio
 import { router } from 'expo-router';
 import Animated from 'react-native-reanimated';
 import { useTemplates } from '@/api/hooks';
-import type { Occasion, Template, TemplateStyle } from '@/api/types';
+import type { Template, TemplateStyle } from '@/api/types';
 import {
   AppText,
   Chip,
@@ -17,15 +17,17 @@ import {
   TAB_BAR_SPACE,
   TemplateCard,
 } from '@/components';
-import { OCCASIONS, STYLES } from '@/constants/catalog';
+import { STYLES } from '@/constants/catalog';
+import { useCategoryTiles } from '@/hooks/useCategoryTiles';
 import { colors, enterUp, fonts, gradients, radius, screenPadding, stagger } from '@/theme';
 
 export default function Explore() {
   const { width } = useWindowDimensions();
+  const tiles = useCategoryTiles();
   const [query, setQuery] = useState('');
-  const [occasion, setOccasion] = useState<Occasion | undefined>();
+  const [occasion, setOccasion] = useState<string | undefined>();
   const [style, setStyle] = useState<TemplateStyle | undefined>();
-  const { data = [], isLoading } = useTemplates({ occasion, style, q: query || undefined });
+  const { data = [], isLoading } = useTemplates({ category: occasion, style, q: query || undefined });
   const cardW = (width - screenPadding * 2 - 12) / 2;
 
   const top = useMemo(() => [...data].sort((a, b) => b.madeCount - a.madeCount), [data]);
@@ -60,7 +62,7 @@ export default function Explore() {
       <Animated.View entering={enterUp(stagger(1))}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.hRow}>
           <Chip label="All" selected={!occasion} onPress={() => setOccasion(undefined)} />
-          {OCCASIONS.filter((o) => !o.soon).map((o) => (
+          {tiles.filter((o) => !o.soon).map((o) => (
             <Chip key={o.id} label={o.label} selected={occasion === o.id} onPress={() => setOccasion(occasion === o.id ? undefined : o.id)} />
           ))}
         </ScrollView>

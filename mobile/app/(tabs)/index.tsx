@@ -2,8 +2,8 @@ import { FlatList, ScrollView, StyleSheet, View } from 'react-native';
 import { router } from 'expo-router';
 import Animated from 'react-native-reanimated';
 import { useTemplates } from '@/api/hooks';
-import type { Occasion, Template } from '@/api/types';
-import { OCCASIONS } from '@/constants/catalog';
+import type { Template } from '@/api/types';
+import { useCategoryTiles } from '@/hooks/useCategoryTiles';
 import {
   AppText,
   Avatar,
@@ -19,19 +19,19 @@ import {
   Vinyl,
 } from '@/components';
 import { useAuthStore } from '@/store/auth';
-import { useCreateFlow } from '@/store/createFlow';
 import { colors, enterUp, gradients, radius, screenPadding, shadows, stagger } from '@/theme';
 import { greeting, initials } from '@/utils/format';
 
 
-const openTemplates = (occasion?: Occasion) => {
-  if (occasion) useCreateFlow.getState().set({ occasion });
+const openTemplates = (occasion?: string) => {
+  // The flow's occasion is set from the picked template (templates.tsx), so only the category filter is passed on.
   router.push(occasion ? { pathname: '/create/templates', params: { occasion } } : '/create/templates');
 };
 
 const openTemplate = (t: Template) => router.push({ pathname: '/create/template/[id]', params: { id: t.id } });
 
 export default function Home() {
+  const tiles = useCategoryTiles();
   const user = useAuthStore((s) => s.user);
   const { data: templates = [] } = useTemplates();
   const trending = templates.filter((t) => t.trending);
@@ -87,7 +87,7 @@ export default function Home() {
       <Animated.View entering={enterUp(stagger(2))} style={{ gap: 12 }}>
         <SectionHeader title="Occasions" action="See all" onAction={() => openTemplates()} />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.hRow}>
-          {OCCASIONS.map((o) => (
+          {tiles.map((o) => (
             <PressableScale
               key={o.id}
               disabled={o.soon}
@@ -97,7 +97,7 @@ export default function Home() {
               style={styles.occ}
             >
               <GradientFill colors={o.colors} vertical style={[styles.occIcon, o.soon && { opacity: 0.55 }]}>
-                <Icon name={o.icon} size={22} />
+                {o.emoji ? <AppText style={{ fontSize: 22 }}>{o.emoji}</AppText> : <Icon name={o.icon} size={22} />}
               </GradientFill>
               <AppText variant="caption" style={{ color: o.soon ? colors.faint : colors.text, fontSize: 11 }}>
                 {o.label}
