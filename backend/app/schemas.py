@@ -10,7 +10,7 @@ TemplateStyle = Literal["bollywood", "retro", "genz"]
 Mood = Literal["happy", "filmy", "romantic", "party"]
 Singer = Literal["female", "male", "duet"]
 GiftStatus = Literal["queued", "writing_lyrics", "composing", "rendering", "preview_ready", "paid", "failed"]
-LibraryStatus = Literal["hd", "preview", "making", "draft", "photo"]
+LibraryStatus = Literal["hd", "preview", "making", "failed", "draft", "photo"]
 Orientation = Literal["vertical", "horizontal"]
 OutputType = Literal["song_video", "image"]
 SongMode = Literal["ai", "upload", "both", "none"]
@@ -56,12 +56,47 @@ class Category(Camel):
     output_type: OutputType = "song_video"
 
 
+Language = Literal["hindi", "hinglish", "english", "punjabi", "tamil", "telugu"]
+MusicStyle = Literal["bollywood_pop", "punjabi_bhangra", "acoustic", "lofi", "edm_party", "sufi", "ballad"]
+Relationship = Literal["friend", "partner", "mom", "dad", "sibling", "colleague", "relative"]
+Trait = Literal["funny", "caring", "foodie", "always_late", "dancer", "traveller", "gamer", "bookworm", "sporty", "shy"]
+
+
+class SongPrefs(Camel):
+    """What makes the song personal. Ids only (no free text) except `idea`, which is cleaned before it reaches a prompt."""
+    language: Language = "hinglish"
+    music_style: Optional[MusicStyle] = None
+    relationship: Optional[Relationship] = None
+    traits: list[Trait] = Field(default_factory=list, max_length=3)
+    idea: str = Field(default="", max_length=150)
+
+
 class AiSongInput(Camel):
     type: Literal["ai"]
     mood: Mood
     singer: Singer
-    version: int = Field(ge=1, le=3)
+    version: int = Field(default=1, ge=1, le=3)
     lyrics: str = Field(default="", max_length=600)  # unused since Gemini was removed; old app builds may still send it
+    draft_id: Optional[str] = Field(default=None, max_length=64)  # the song the user already made and approved on the song screen
+    prefs: SongPrefs = Field(default_factory=SongPrefs)
+
+
+class SongDraftInput(Camel):
+    draft_id: str = Field(min_length=8, max_length=64)
+    template_id: str
+    recipient_name: str = Field(min_length=1, max_length=20)
+    sender_name: str = Field(min_length=1, max_length=20)
+    fun_fact: str = Field(default="", max_length=120)
+    mood: Mood
+    singer: Singer
+    prefs: SongPrefs = Field(default_factory=SongPrefs)
+
+
+class SongDraft(Camel):
+    audio_url: str
+    duration_sec: int
+    tries_used: int
+    tries_left: int
 
 
 class UploadSongInput(Camel):

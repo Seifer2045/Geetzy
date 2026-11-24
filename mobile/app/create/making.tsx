@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Alert, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import Animated, { Easing, useAnimatedProps, useSharedValue, withTiming } from 'react-native-reanimated';
 import Svg, { Circle, Defs, LinearGradient, Path, Stop } from 'react-native-svg';
@@ -59,14 +59,26 @@ export default function Making() {
       const id = setTimeout(() => router.replace({ pathname: '/create/preview', params: { giftId } }), 600);
       return () => clearTimeout(id);
     }
-    if (status === 'failed') {
-      Alert.alert(
-        'Could not make your video',
-        'Something went wrong while making the song or video. You were not charged. Please try again.',
-        [{ text: 'Go back', onPress: () => router.back() }],
-      );
-    }
   }, [status, giftId]);
+
+  if (status === 'failed') {
+    return (
+      <Screen glow="center" scroll={false} contentStyle={styles.root}>
+        <Animated.View entering={enterUp(stagger(0))} style={{ alignItems: 'center', gap: 10, marginTop: 80 }}>
+          <AppText variant="h1" style={{ fontSize: 44, lineHeight: 52 }}>😕</AppText>
+          <AppText variant="h3" align="center">Could not make the video</AppText>
+          <AppText variant="bodySm" color="muted" align="center" style={{ maxWidth: 300 }}>
+            Something went wrong while making it. You were not charged. Please try again.
+          </AppText>
+        </Animated.View>
+        <View style={{ flex: 1 }} />
+        <View style={{ alignSelf: 'stretch', gap: 10 }}>
+          <Button label="Try again" onPress={() => router.dismissTo('/create/templates')} />
+          <Button variant="glass" label="Go to Library" onPress={() => router.dismissTo('/(tabs)/library')} />
+        </View>
+      </Screen>
+    );
+  }
 
   const idx = ORDER.indexOf(status);
   const remainingSec = Math.max(5, Math.round((1 - progress) * TYPICAL_JOB_SEC));

@@ -61,6 +61,26 @@ class MovieInput:
     # Admin's "video prompt", already filled with the names: line 1 = opening headline, line 2 = closing caption.
     headline: str = ""
     closing: str = ""
+    # Photos cut for their frame (services/photo_prep.py): key "{photo number}:{w}x{h}" at HD size -> url.
+    photo_variants: dict[str, str] = field(default_factory=dict)
+
+
+def builtin_frames(
+    n_photos: int, *, orientation: str = "vertical", art_url: str | None = None, slot: Slot | None = None,
+) -> dict[int, set[tuple[int, int]]]:
+    """Frame size (HD pixels) of every photo in the built-in design; the same decision `build_movie` makes below."""
+    width, height = (HORIZONTAL_SIZES if orientation == "horizontal" else SIZES)["hd"]
+    if art_url and slot:
+        _, _, w, h = slot.px((width, height))
+        frame = (w, h)
+    else:
+        frame = (width, height)
+    return {k: {frame} for k in range(1, n_photos + 1)}
+
+
+def _variant(m: "MovieInput", k: int, frame: tuple[int, int]) -> str:
+    """The cut of photo k for this frame (frame measured at HD size), else the plain photo."""
+    return m.photo_variants.get(f"{k}:{frame[0]}x{frame[1]}") or m.photo_urls[k - 1]
 
 
 def _text(text: str, *, font: str, size_vw: float, y: int, w: int, h: int, style: str, color: str = "#FFFFFF") -> dict:
@@ -102,19 +122,21 @@ def build_movie(m: MovieInput, *, webhook_url: str, client_data: dict[str, str])
     caption_y = int(height * (0.66 if horizontal else 0.62))
 
     slot_mode = bool(m.art_url and m.slot)
+    hd_frames = builtin_frames(n, orientation=m.orientation, art_url=m.art_url, slot=m.slot)
     scenes = []
     for i, url in enumerate(m.photo_urls):
+        url = _variant(m, i + 1, next(iter(hd_frames[i + 1])))
         if slot_mode:
             left, top, slot_w, slot_h = m.slot.px((width, height))  # type: ignore[union-attr]
             photo: dict = {
-                "type": "image", "src": url, "resize": "cover", "position": "custom",
+                "type": "image", "src": url, "position": "custom",
                 "x": left, "y": top, "width": slot_w, "height": slot_h,
-                "zoom": 2, "pan": PANS[i % len(PANS)], "duration": -2, "z-index": 1,
+                "zoom": 2, "duration": -2, "z-index": 1,
             }
         else:
             photo = {
                 "type": "image", "src": url, "resize": "cover", "position": "center-center",
-                "zoom": 2, "pan": PANS[i % len(PANS)], "duration": -2,
+                "zoom": 2, "duration": -2,
             }
         elements: list[dict] = [photo]
         if i == 0:

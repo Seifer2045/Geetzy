@@ -1,14 +1,13 @@
-"""Movie template: validator (untrusted Grok output), renderer, xAI provider, and the "Generate with Grok" service."""
+"""Compact (older) movie template format: validator and renderer."""
 import copy
 import json
 
 import pytest
 
-from app.providers import xai
-from app.services import movie_design
+from tests.samples import EXAMPLE
 from app.video import movie_template as mt
 
-GOOD = movie_design.EXAMPLE
+GOOD = EXAMPLE
 
 
 def ctx(**kw):
@@ -18,7 +17,7 @@ def ctx(**kw):
 
 
 # ── validator
-def test_the_example_given_to_grok_is_valid():
+def test_the_sample_template_is_valid():
     assert mt.validate(GOOD, photos_min=1, photos_max=5) == []
     assert mt.validate(GOOD, photos_min=3, photos_max=3) == []
 
@@ -30,7 +29,7 @@ def _bad(mutate, **kw):
 
 
 @pytest.mark.parametrize("mutate,needle", [
-    (lambda m: m["scenes"][0]["elements"].append({"type": "video", "src": "{{photo_1}}"}), "not allowed"),
+    (lambda m: m["scenes"][0]["elements"].append({"type": "html", "src": "{{photo_1}}"}), "not allowed"),
     (lambda m: m["scenes"][0]["elements"][0].update(src="https://evil.example/x.png"), "no links"),
     (lambda m: m["scenes"][0]["elements"][0].update(src="{{photo_9}}"), "max photos"),
     (lambda m: m["scenes"][0]["elements"][0].update(src="{{secret}}"), "unknown marker"),
@@ -124,155 +123,99 @@ def test_no_photos_is_an_error():
         mt.render_template(GOOD, ctx(photo_urls=[]))
 
 
-# ── xAI provider
-class _Resp:
-    def __init__(self, status=200, body=None, text=""):
-        self.status_code, self._body, self.text = status, body, text
-
-    def json(self):
-        if self._body is None:
-            raise ValueError("no json")
-        return self._body
-
-
-def test_xai_returns_the_message_and_sends_json_mode(monkeypatch):
-    from app.config import get_settings
-    monkeypatch.setattr(get_settings(), "xai_api_key", "k")
-    seen = {}
-
-    def post(url, headers, json, timeout):  # noqa: A002
-        seen.update(url=url, headers=headers, body=json)
-        return _Resp(body={"choices": [{"message": {"content": '{"scenes": []}'}}]})
-
-    monkeypatch.setattr(xai.httpx, "post", post)
-    assert xai.chat_json("sys", [{"role": "user", "content": "hi"}]) == '{"scenes": []}'
-    assert seen["headers"]["Authorization"] == "Bearer k" and seen["body"]["response_format"] == {"type": "json_object"}
-    assert seen["body"]["messages"][0] == {"role": "system", "content": "sys"} and seen["body"]["max_tokens"] == xai.MAX_TOKENS
+# ── song is always played, text always fits, design is frozen per gift
+def test_song_is_played_even_if_grok_forgot_the_audio_element():
+    m = copy.deepcopy(GOOD)
+    m["elements"] = [e for e in m["elements"] if e["type"] != "audio"]
+    assert mt.validate(m, photos_min=3, photos_max=5) == []  # valid on purpose: the renderer fixes it
+    body = mt.render_template(m, ctx(audio_url="https://a/paid-song.mp3", audio_seek=4))
+    audio = [e for e in body["elements"] if e["type"] == "audio"]
+    assert len(audio) == 1 and audio[0]["src"] == "https://a/paid-song.mp3" and audio[0]["seek"] == 4
+    assert not any(e["type"] == "audio" for e in mt.render_template(m, ctx(audio_url=None))["elements"])  # silent stays silent
 
 
-def test_xai_errors_are_readable(monkeypatch):
-    from app.config import get_settings
-    monkeypatch.setattr(get_settings(), "xai_api_key", "")
-    with pytest.raises(xai.XaiError, match="XAI_API_KEY"):
-        xai.chat_json("s", [])
-    monkeypatch.setattr(get_settings(), "xai_api_key", "k")
-    monkeypatch.setattr(xai.httpx, "post", lambda *a, **k: _Resp(status=401, text="bad key"))
-    with pytest.raises(xai.XaiError, match="401"):
-        xai.chat_json("s", [])
-    monkeypatch.setattr(xai.httpx, "post", lambda *a, **k: _Resp(body={"nope": 1}))
-    with pytest.raises(xai.XaiError, match="unexpected"):
-        xai.chat_json("s", [])
+def test_only_one_audio_element_when_template_has_one():
+    body = mt.render_template(GOOD, ctx())
+    assert sum(e["type"] == "audio" for e in body["elements"]) == 1
 
 
-# ── "Generate with Grok" service (in-memory fake database)
-class _Q:
-    def __init__(self, db, table):
-        self.db, self.table, self.filters, self.fields, self.mode, self.count_mode = db, table, [], None, "select", False
-
-    def select(self, *_a, count=None, head=False):
-        self.count_mode = bool(count)
-        return self
-
-    def update(self, fields):
-        self.mode, self.fields = "update", fields
-        return self
-
-    def insert(self, row):
-        self.db.ai.append(row)
-        return self
-
-    def eq(self, col, val):
-        self.filters.append((col, val))
-        return self
-
-    def gte(self, *_a):
-        return self
-
-    def execute(self):
-        class R:
-            data: list = []
-            count = 0
-        r = R()
-        if self.table == "ai_requests":
-            r.count = sum(1 for x in self.db.ai if x.get("kind") == "movie" and x.get("ok", True) is not None)
-            r.data = self.db.ai
-            return r
-        row = self.db.row
-        match = all(row.get(c) == v for c, v in self.filters)
-        if self.mode == "update" and match:
-            row.update(self.fields)
-        r.data = [row] if match else []
-        return r
+def test_long_text_shrinks_to_fit_its_box_and_short_text_is_untouched():
+    box, canvas = [0.05, 0.66, 0.9, 0.16], (540, 960)
+    assert mt.fit_font_size("Happy Birthday!", 0.05, box, canvas) == 0.05
+    long = mt.fit_font_size("x" * 120, 0.09, box, canvas)
+    assert mt.MIN_FONT <= long < 0.09
+    lines = -(-120 // max(1, int(box[2] / (mt.CHAR_WIDTH * long))))
+    assert lines * mt.LINE_HEIGHT * long <= box[3] * canvas[1] / canvas[0] + 1e-9
+    assert mt.fit_font_size("x" * 5000, 0.2, box, canvas) == mt.MIN_FONT  # never below the floor, never loops forever
 
 
-class _Db:
-    def __init__(self, **row):
-        base = {"id": "TPL-1", "movie_status": "queued", "movie_prompt": "royal wedding style", "photos_min": 1, "photos_max": 3,
-                "duration_sec": 15, "style": "bollywood", "layout_id": None, "song_mode": "both", "occasion": "birthday",
-                "movie_json": None, "movie_hash": None, "categories": {"name": "Birthday"}}
-        self.row, self.ai = {**base, **row}, []
-
-    def table(self, name):
-        return _Q(self, name)
+def test_rendered_font_size_is_same_at_preview_and_hd():
+    values = {"name": "Priyadarshini Venkataraman", "sender": "S", "fun_fact": "y" * 120, "occasion": "B"}
+    sizes = {k: [e["settings"]["font-size"] for s in mt.render_template(GOOD, ctx(kind=k, values=values))["scenes"]
+                 for e in s["elements"] if e["type"] == "text"] for k in ("preview", "hd")}
+    assert sizes["preview"] == sizes["hd"]
 
 
-@pytest.fixture
-def grok(monkeypatch):
-    from app.config import get_settings
-    monkeypatch.setattr(get_settings(), "xai_api_key", "k")
-    d = _Db()
-    monkeypatch.setattr(movie_design, "db", lambda: d)
-    return d
+def test_gift_renders_from_its_frozen_design_not_the_live_template():
+    from app import pipeline
+    live = {"id": "t1", "song_mode": "ai", "movie_json": {"scenes": "NEW GROK DESIGN"}, "duration_sec": 15, "updated_at": "2026-11-26"}
+    frozen = {"movie_json": GOOD, "duration_sec": 15, "updated_at": "2026-11-20", "song_mode": "none", "id": "evil"}
+    out = pipeline.with_frozen_design(live, {"design": frozen})
+    assert out["movie_json"] is GOOD and out["updated_at"] == "2026-11-20"
+    assert out["song_mode"] == "ai" and out["id"] == "t1"  # only look-defining keys are copied
+    assert pipeline.with_frozen_design(live, {"design": None}) is live  # gifts made before the migration
+    assert pipeline.with_frozen_design(live, {}) is live
 
 
-def _replies(monkeypatch, *texts):
-    calls = []
-    queue = list(texts)
-    monkeypatch.setattr(movie_design.xai, "chat_json", lambda system, messages: calls.append(messages) or queue.pop(0))
-    return calls
+# ── the title can never be hidden
+def _text_of(body):
+    return [e for s in body["scenes"] for e in s["elements"] if e["type"] == "text"]
 
 
-def test_grok_good_reply_is_saved_and_old_preview_is_reset(grok, monkeypatch):
-    calls = _replies(monkeypatch, json.dumps(GOOD))
-    assert movie_design.generate("TPL-1") == "ready"
-    assert grok.row["movie_json"] == GOOD and grok.row["movie_source"] == "grok" and grok.row["movie_status"] == "ready"
-    assert grok.row["preview_status"] == "none" and grok.row["status"] == "draft" and grok.row["movie_hash"]
-    assert len(calls) == 1 and len(grok.ai) == 1 and grok.ai[0]["kind"] == "movie" and grok.ai[0]["provider"] == "xai"
-    assert "royal wedding style" in calls[0][0]["content"]
+def test_text_is_always_above_the_frame_even_with_a_small_z():
+    movie = copy.deepcopy(GOOD)
+    for sc in movie["scenes"]:
+        for e in sc["elements"]:
+            if e["type"] == "text":
+                e["z"] = 5
+    body = mt.render_template(movie, ctx(art_url="https://a/art.png"))
+    assert _text_of(body) and all(t["z-index"] >= mt.TEXT_MIN_Z > mt.ART_Z for t in _text_of(body))
 
 
-def test_grok_invalid_reply_gets_one_retry_with_the_errors(grok, monkeypatch):
-    bad = copy.deepcopy(GOOD)
-    bad["scenes"][0]["elements"][0]["src"] = "https://evil/x.png"
-    calls = _replies(monkeypatch, json.dumps(bad), "```json\n" + json.dumps(GOOD) + "\n```")
-    assert movie_design.generate("TPL-1") == "ready"
-    assert len(calls) == 2 and "no links" in calls[1][-1]["content"] and grok.row["movie_json"] == GOOD
-    assert len(grok.ai) == 2  # both calls are counted for the cost dashboard
+def _with_art(title_first=True):
+    movie = copy.deepcopy(GOOD)
+    title = {"duration": 2, "elements": [{"type": "text", "text": "HAPPY ANNIVERSARY", "box": [0.05, 0.4, 0.9, 0.15], "size": 0.09, "z": 5}]}
+    movie["scenes"].insert(0, title)
+    movie["elements"] = [e for e in movie.get("elements", []) if e["src" if "src" in e else "type"] != "{{background}}"]
+    movie["elements"].append({"type": "image", "src": "{{art}}", "box": [0, 0, 1, 1], "z": 10})
+    return movie
 
 
-def test_grok_twice_invalid_keeps_the_previous_json(grok, monkeypatch):
-    grok.row["movie_json"] = {"scenes": ["previous"]}
-    _replies(monkeypatch, "not json", '{"scenes": []}')
-    assert movie_design.generate("TPL-1") == "error"
-    assert grok.row["movie_json"] == {"scenes": ["previous"]}
-    assert grok.row["movie_status"] == "error" and "rejected" in grok.row["movie_error"]
+def test_the_frame_is_only_drawn_on_scenes_with_a_photo():
+    body = mt.render_template(_with_art(), ctx(art_url="https://a/art.png"))
+    art_in_scene = [any(e.get("src") == "https://a/art.png" for e in s["elements"]) for s in body["scenes"]]
+    assert art_in_scene == [False, True, True, True]  # the title scene has no frame, so its background and title show
+    assert not any(e.get("src") == "https://a/art.png" for e in body["elements"])  # and it is not movie-wide any more
 
 
-def test_same_brief_does_not_call_grok_again(grok, monkeypatch):
-    calls = _replies(monkeypatch)  # any call would pop from an empty list and fail
-    grok.row.update(movie_json=GOOD, movie_hash=movie_design.brief_hash(grok.row))
-    assert movie_design.generate("TPL-1") == "unchanged" and not calls and grok.row["movie_status"] == "ready"
+def test_user_photos_stay_under_the_frame():
+    body = mt.render_template(_with_art(), ctx(art_url="https://a/art.png"))
+    for s in body["scenes"]:
+        photos = [e for e in s["elements"] if e["type"] == "image" and e["src"].startswith("https://p/")]
+        art = [e for e in s["elements"] if e.get("src") == "https://a/art.png"]
+        assert all(p["z-index"] < a["z-index"] for p in photos for a in art)
 
 
-def test_daily_cap_blocks_the_call(grok, monkeypatch):
-    from app.config import get_settings
-    monkeypatch.setattr(get_settings(), "xai_calls_per_day", 1)
-    grok.ai.append({"kind": "movie", "provider": "xai"})
-    calls = _replies(monkeypatch)
-    assert movie_design.generate("TPL-1") == "error" and not calls and "limit" in grok.row["movie_error"]
+def test_the_background_picture_is_added_when_the_template_forgot_it():
+    movie = copy.deepcopy(GOOD)
+    movie["elements"] = [e for e in movie["elements"] if e.get("src") != "{{background}}"]
+    body = mt.render_template(movie, ctx(background_url="https://bg/pic.jpg"))
+    bg = [e for e in body["elements"] if e.get("src") == "https://bg/pic.jpg"]
+    assert len(bg) == 1 and bg[0]["z-index"] == 0 and bg[0]["width"] == 540 and bg[0]["height"] == 960
 
 
-def test_only_a_queued_job_runs(grok, monkeypatch):
-    grok.row["movie_status"] = "running"
-    _replies(monkeypatch)
-    assert movie_design.generate("TPL-1") == "skipped"
+def test_the_background_picture_is_not_added_twice_or_over_a_frame():
+    body = mt.render_template(GOOD, ctx(background_url="https://bg/pic.jpg"))
+    assert sum(1 for e in body["elements"] if e.get("src") == "https://bg/pic.jpg") == 1
+    framed = mt.render_template(_with_art(), ctx(background_url="https://bg/pic.jpg", art_url="https://a/art.png"))
+    assert not any(e.get("src") == "https://bg/pic.jpg" for e in framed["elements"])

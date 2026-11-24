@@ -15,3 +15,4 @@ export * from './TabBar';
 export * from './TemplateCard';
 export * from './TopBar';
 export * from './Waveform';
+export * from './SongPlayer';

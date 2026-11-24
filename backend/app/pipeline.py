@@ -12,16 +12,17 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import httpx
-
 from .config import get_settings
 from .db import MEDIA_BUCKET, TEMPLATE_BUCKET, UPLOADS_BUCKET, db, one, public_url, signed_url, upload_bytes
 from .placeholders import fill
 from .providers import elevenlabs
+from .services.song_prompt import gift_prompt
 from .services.songs import get_or_make_song
 from .studio import service as studio_service
 from .studio.compose import compose_image
 from .studio.layouts import get_layout
-from .services.render_body import movie_body
+from .services.photo_prep import prepare_photos
+from .services.render_body import movie_body, photo_frames
 from .video.json2video import create_movie, get_movie, split_video_prompt
 from .video.watermark import make_preview
 
@@ -53,6 +54,21 @@ def _ago(delta: timedelta) -> str:
 
 def _older_than(ts: str, delta: timedelta) -> bool:
     return datetime.fromisoformat(ts) < _now() - delta
+
+
+# The parts of a template that decide how the video LOOKS. They are copied onto the gift when it is created
+# (gifts.design, see migration 20261125), so the HD video the user pays for matches the preview they saw,
+# even if the admin edits or regenerates the template in between.
+DESIGN_KEYS = ("movie_json", "song_json", "duration_sec", "color_from", "color_to", "render_config", "video_prompt", "updated_at")
+
+
+def with_frozen_design(tpl: dict, gift: dict) -> dict:
+    """The template as it was when this gift was created. Older gifts (no snapshot) use the live template."""
+    design = gift.get("design")
+    if not isinstance(design, dict):
+        return tpl
+    frozen = {k: design[k] for k in DESIGN_KEYS if k in design}
+    return {**tpl, **frozen}
 
 
 def _gift(gift_id: str) -> dict | None:
@@ -124,11 +140,8 @@ def _make_song_and_render(g: dict) -> None:
 
     if song and song["source"] == "ai" and not song["audio_path"]:  # a retry after a failed render reuses the song
         _set_status(g["id"], "composing")
-        # The admin's audio prompt with {name} {sender} {fun_fact} {occasion} replaced for THIS gift.
-        direction = fill(tpl.get("song_prompt") or tpl.get("prompt") or "", name=g["recipient_name"], sender=g["sender_name"],
-                         fun_fact=g["fun_fact"], occasion=g["occasion"])
-        prompt = elevenlabs.build_prompt(direction=direction, style=tpl["style"], mood=song["mood"] or "happy",
-                                         singer=song["singer"] or "female", seconds=tpl["duration_sec"])
+        # Only when the user did not make the song on the phone (old app build): same personal prompt as the song screen.
+        prompt = gift_prompt(tpl, g, song)
         path, _cached = get_or_make_song(
             prompt, seconds=tpl["duration_sec"], instrumental=bool(tpl.get("song_instrumental")),
             on_made=lambda ms, ok, err: _log_ai(g["user_id"], g["id"], "song", get_settings().elevenlabs_model,
@@ -177,6 +190,7 @@ def start_render(g: dict, kind: str, *, song: dict | None = None, tpl: dict | No
     tpl = tpl or one(db().table("templates").select("*").eq("id", g["template_id"]).execute())
     if not tpl:
         raise RuntimeError("Gift is missing its template")
+    tpl = with_frozen_design(tpl, g)
     mode = tpl["song_mode"]
     silent = mode == "none"
     fixed = mode == "fixed"  # the template's own cropped song, same for every gift (no AI cost)
@@ -185,7 +199,6 @@ def start_render(g: dict, kind: str, *, song: dict | None = None, tpl: dict | No
         raise RuntimeError("Gift is missing its song")
 
     photos = db().table("gift_photos").select("storage_path").eq("gift_id", g["id"]).order("position").execute().data
-    photo_urls = [u for p in photos if (u := signed_url(UPLOADS_BUCKET, p["storage_path"]))]
     audio_url: str | None = None
     audio_ref, seek, lines, fade = "", 0.0, [], bool(song["fade"]) if song else False
     if fixed:
@@ -198,7 +211,7 @@ def start_render(g: dict, kind: str, *, song: dict | None = None, tpl: dict | No
     elif song:
         audio_ref, seek = song["upload_path"], float(song["trim_start_sec"] or 0)
         audio_url = signed_url(UPLOADS_BUCKET, audio_ref)
-    if ((song or fixed) and not audio_url) or not photo_urls:
+    if ((song or fixed) and not audio_url) or not photos:
         raise RuntimeError("Song or photos not found in storage")
 
     # Template Studio video: photos go into the frame, the art overlay (transparent hole) sits on top.
@@ -217,14 +230,22 @@ def start_render(g: dict, kind: str, *, song: dict | None = None, tpl: dict | No
     if twin:
         return twin["id"]
 
+    # Cut every photo for the frame(s) it is shown in (face placed well). Reuses files from an earlier render of this gift.
+    slot = layout.slots[0] if studio_art and layout else None
+    frames = photo_frames(tpl, n_photos=len(photos), studio_art=bool(studio_art), slot=slot)
+    prepared = prepare_photos(g["user_id"], g["id"], [p["storage_path"] for p in photos], frames)
+    if not prepared.urls:
+        raise RuntimeError("Photos not found in storage")
+
     job = one(db().table("render_jobs").insert({"gift_id": g["id"], "kind": kind, "input_hash": fingerprint}).execute())
     webhook = f"{s.base_url}/webhooks/json2video?secret={s.webhook_secret}&job={job['id']}"
     body = movie_body(
         tpl, kind=kind, occasion=g["occasion"], recipient=g["recipient_name"], sender=g["sender_name"], fun_fact=g["fun_fact"],
-        photo_urls=photo_urls, audio_url=audio_url, audio_seek=seek, fade=fade, lyric_lines=lines, art_url=studio_art,
+        photo_urls=prepared.urls, photo_variants=prepared.variants, audio_url=audio_url, audio_seek=seek, fade=fade, lyric_lines=lines, art_url=studio_art,
         background_url=public_url(TEMPLATE_BUCKET, tpl.get("art_bg_path")) if tpl.get("art_status") == "ready" else None,
-        slot=layout.slots[0] if studio_art and layout else None, watermark=True, webhook_url=webhook,
+        slot=slot, watermark=True, webhook_url=webhook,
         client_data={"giftId": g["id"], "jobId": job["id"], "kind": kind}, headline=headline, closing=closing,
+        song_json=tpl.get("song_json") if (song or fixed) else None,
     )
     try:
         project = create_movie(body)

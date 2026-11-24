@@ -1,7 +1,8 @@
 import Link from 'next/link';
 import { requireAdmin } from '@/lib/auth';
 import { db } from '@/lib/supabase/admin';
-import { EMPTY_TEMPLATE, TemplateStudio } from '@/components/TemplateStudio';
+import { TemplateStudio } from '@/components/TemplateStudio';
+import { EMPTY_TEMPLATE } from '@/lib/templateData';
 import type { LayoutOption } from '@/components/LayoutPicker';
 
 type Props = { searchParams: Promise<{ type?: string; cat?: string }> };

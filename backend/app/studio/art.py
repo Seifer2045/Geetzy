@@ -15,7 +15,16 @@ SHADOW_OFFSET = 14
 
 def frame_overlay(bg_bytes: bytes, slots: tuple[Slot, ...] | list[Slot], size: tuple[int, int] = CANVAS) -> bytes:
     """PNG (RGBA): the background with a framed, fully transparent hole at every slot."""
-    bg = cover_fit(open_image(bg_bytes), size).convert("RGBA")
+    return _overlay(cover_fit(open_image(bg_bytes), size).convert("RGBA"), slots, size)
+
+
+def frame_only(slots: tuple[Slot, ...] | list[Slot], size: tuple[int, int] = CANVAS) -> bytes:
+    """PNG (RGBA): ONLY the frame (white border + shadow) around every slot, everything else transparent.
+    Used on top of a template's background video, which supplies the decoration itself."""
+    return _overlay(Image.new("RGBA", size, (0, 0, 0, 0)), slots, size)
+
+
+def _overlay(bg: Image.Image, slots: tuple[Slot, ...] | list[Slot], size: tuple[int, int]) -> bytes:
     shadow = Image.new("RGBA", size, (0, 0, 0, 0))
     ring = Image.new("RGBA", size, (0, 0, 0, 0))
     hole = Image.new("L", size, 0)

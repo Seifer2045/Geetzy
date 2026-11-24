@@ -41,18 +41,25 @@ Next.js app in `admin/`, deployed as its **own Vercel project**. It talks to Sup
 ## API keys: where they go
 | Key | Where | How |
 |---|---|---|
-| `XAI_API_KEY` (Grok) | **backend only** | local: `backend/.env` · production: Vercel project **geetzy-api** -> Settings -> Environment Variables (Production), or fill `backend/.env` and run `backend\scripts\push-env.ps1`; then redeploy (`cd backend; npx vercel --prod`) |
+| `JSON2VIDEO_API_KEY` | **backend only** | local: `backend/.env` · production: Vercel project **geetzy-api** -> Settings -> Environment Variables (Production), or fill `backend/.env` and run `backend\scripts\push-env.ps1`; then redeploy (`cd backend; npx vercel --prod`) |
 | `ELEVENLABS_API_KEY` | **backend only** | same as above |
-| `XAI_MODEL` (default `grok-4`), `XAI_CALLS_PER_DAY` (default 40) | backend env, optional | change the model if xAI renames it |
 | `INTERNAL_SECRET` + `BACKEND_URL` | **admin** (`admin/.env.local` and Vercel project geetzy-admin) | same `INTERNAL_SECRET` as the backend; lets Validate / Save check the design JSON |
-Never put these keys in the mobile app or in git. Later you can rotate them from **API keys** in this admin (rows `xai`, `elevenlabs`). Apply `supabase/migrations/20261124000000_grok_movie.sql` too.
+Never put these keys in the mobile app or in git. Later you can rotate them from **API keys** in this admin (rows `elevenlabs`, `json2video`). Apply `supabase/migrations/20261130000000_remove_grok.sql` (removes the old Grok jobs and the xAI key row).
+
+## Designing the video (JSON2Video)
+In the template form, section **Design the video**:
+1. **Start from a starter** (Royal Birthday, Romantic Anniversary, Neon Party, Soft Apology, Festival Glow). The JSON appears in the box and the photo range is set for you.
+2. Or design your own in **json2video.com/editor**: canvas **1080 x 1920**, a fixed `duration` for every scene, your text styles / animations / transitions / overlays / intro / outro. Put the placeholders where things change: `{{photo_1}}` as the `src` of the image for photo 1 (and `{{photo_2}}`…), `{{name}}` `{{sender}}` `{{fun_fact}}` `{{occasion}}` inside text, `{{audio}}` for the song (added for you if missing), `{{background}}` for this template's background picture. Copy the movie JSON and paste it in the box.
+3. Press **Validate** (plain-English problems), **Save**, then **Generate preview**. The preview shows your design with sample photos, a sample name **and the song** (the AI song from your audio prompt, or your own song). Press play: sound is on.
+4. Publish when the preview looks right.
+Notes: scenes that use a photo the user did not add are dropped and the rest are stretched to the video length. A photo is cut to the size of its image element (its `width` x `height`) with the face kept in view, so set a real size for each photo. Not supported: JSON2Video variables, conditions, repeating scenes (`iterate`). `html` layers need pixel sizes (for example `width:860px;height:1020px`). Starters were tested on a free JSON2Video plan, so a small "JSON2Video.com" mark may show; a paid plan removes it.
+**Decorative frame:** **Free design (no frame)** is the default. A frame layout puts every photo in the same bordered box (older templates).
 
 ## Template builder (`/templates/new?type=song_video&cat=<categoryId>`)
 Sections, top to bottom:
 1. **Basics** — name, category (decides where the app lists it), description, tags.
 2. **Video** — layout (frame), **min / max photos the user can add**, length, style, colours, and the **video text prompt** (line 1 = opening title, line 2 = closing line; placeholders allowed). JSON2Video does not make pictures from prompts, so this prompt is on-screen text only. The video always has exactly as many scenes as photos the user adds.
 3. **Song** — who chooses: user (AI or own), AI only, own only, **Template song** (same song for everyone, free) or none. **Audio prompt** goes to ElevenLabs (once per video, cached). Upload a **template song** and drag the 15 s window (the file is stored whole; the renderer skips into it with `seek`).
-   **Video design (Grok):** write a brief, press **Generate with Grok** (save the template first), wait a few seconds, then read or edit the JSON and press **Validate**. Same brief + settings = no new Grok call; **New design anyway** forces one. Empty JSON = the built-in design. You can also paste your own JSON (no Grok needed). The JSON is checked again on Save. Photos, names and the song are filled in per video; the design stays.
 4. **Background picture** — optional upload. None = free gradient from the two colours.
 5. **Price** — standard tier, optional **custom price** (the app shows it; Play bills the nearest tier), strike-through price.
 6. **Preview** (bottom) — instant sketch while you type (free). **Save & generate preview** builds the background, then renders the real video (about the video length in JSON2Video credits, plus one ElevenLabs song if the template uses an AI song and has no template song).

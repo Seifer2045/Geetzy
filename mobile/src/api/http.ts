@@ -1,6 +1,6 @@
 import { getSupabase } from '@/auth/supabase';
 import { env } from '@/config/env';
-import type { Category, CreateGiftInput, Gift, LibraryItem, Template, TemplateQuery } from './types';
+import type { Category, CreateGiftInput, Gift, LibraryItem, SongDraft, SongDraftInput, Template, TemplateQuery } from './types';
 
 export class ApiError extends Error {
   constructor(
@@ -52,6 +52,8 @@ export const httpApi = {
   listCategories: (outputType?: string) => request<Category[]>(`/categories${qs({ outputType })}`),
   getTemplate: (id: string) => request<Template>(`/templates/${id}`),
   createGift: (input: CreateGiftInput) => request<Gift>('/gifts', { method: 'POST', body: JSON.stringify(input) }),
+  /** Makes the user's personal song (one per create flow). Takes ~30 s, so no timeout is set here. */
+  makeSongDraft: (input: SongDraftInput) => request<SongDraft>('/songs/draft', { method: 'POST', body: JSON.stringify(input) }),
   getGift: (id: string) => request<Gift>(`/gifts/${id}`),
   verifyPayment: (giftId: string) => request<Gift>('/payments/verify', { method: 'POST', body: JSON.stringify({ giftId }) }),
   listLibrary: () => request<LibraryItem[]>('/library'),

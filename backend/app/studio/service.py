@@ -22,7 +22,7 @@ from ..video.json2video import create_movie, get_movie, split_video_prompt
 from ..video.watermark import shrink_photo
 from . import art as art_mod
 from .compose import compose_image
-from .layouts import get_layout
+from .layouts import get_layout, FREE_LAYOUT
 from .samples import SAMPLE_FUN_FACT, SAMPLE_NAME, SAMPLE_SENDER, sample_photos
 
 log = logging.getLogger("geetzy.studio")
@@ -103,7 +103,7 @@ def run_art(template_id: str) -> str:
             "art_status": "ready", "art_error": None, "status": "draft", "auto_preview": False,
             "preview_status": "queued" if tpl.get("auto_preview") and tpl.get("movie_status") not in ("queued", "running") else "none", "preview_error": None,
         }
-        if layout.kind == "video":
+        if layout.kind == "video" and layout.id != FREE_LAYOUT:
             overlay = art_mod.frame_overlay(bg, layout.slots)
             fields["art_path"] = upload_bytes(TEMPLATE_BUCKET, f"{base}/art_{stamp}.png", overlay, "image/png")
         _set(template_id, **fields)
@@ -188,6 +188,7 @@ def _preview_video(tpl: dict, layout) -> str:
         art_url=public_url(TEMPLATE_BUCKET, tpl["art_path"]), background_url=public_url(TEMPLATE_BUCKET, tpl.get("art_bg_path")),
         slot=layout.slots[0], watermark=False, webhook_url=webhook,
         client_data={"templateId": tpl["id"], "jobId": job["id"], "kind": "template-preview"}, headline=headline, closing=closing,
+        song_json=tpl.get("song_json") if audio_url else None,
     )
     try:
         project = create_movie(body)
@@ -225,7 +226,7 @@ def sweep_templates() -> dict[str, int]:
     done = {"redispatched": 0, "timed_out": 0, "polled": 0}
 
     # queued but nobody picked it up (trigger missed) → start again
-    for column, path in (("art_status", "art"), ("preview_status", "preview"), ("movie_status", "movie")):
+    for column, path in (("art_status", "art"), ("preview_status", "preview"), ("song_status", "song")):
         rows = db().table("templates").select("id").eq(column, "queued").lt("updated_at", _ago(REDISPATCH_AFTER)).limit(5).execute().data
         for r in rows:
             db().rpc("call_backend", {"p_path": f"/internal/templates/{r['id']}/{path}"}).execute()
@@ -236,9 +237,9 @@ def sweep_templates() -> dict[str, int]:
         _set(r["id"], art_status="error", art_error="Timed out. Please try again.")
         done["timed_out"] += 1
 
-    # Grok job stuck "running" (function died)
-    for r in db().table("templates").select("id").eq("movie_status", "running").lt("updated_at", _ago(STUCK_AFTER)).limit(10).execute().data:
-        _set(r["id"], movie_status="error", movie_error="Timed out. Please try again.")
+    # song job stuck "running" (function died)
+    for r in db().table("templates").select("id").eq("song_status", "running").lt("updated_at", _ago(STUCK_AFTER)).limit(10).execute().data:
+        _set(r["id"], song_status="error", song_error="Timed out. Please try again.")
         done["timed_out"] += 1
 
     # preview stuck "running": video previews wait for JSON2Video, so ask it; others just time out

@@ -1,7 +1,8 @@
-"""Movie template: the JSON that Grok (or the admin) writes, and the renderer that turns it into a JSON2Video movie.
+"""Movie template, COMPACT format (fractions + `box`): validator and renderer. The older, Grok-era format; still renders.
+New templates use native JSON2Video JSON (see native_template.py).
 
-Why our own format? Grok's output is UNTRUSTED. This format is JSON2Video-shaped but small and strict:
-- only `image`, `text`, `audio` elements (no remote video/html/components → no extra credits, no remote code);
+Why our own format? Its author could be an AI, so the content is untrusted. It is JSON2Video-shaped but small and strict:
+- only `image`, `text`, `audio` and `voice` elements (no remote video/html/components);
 - every picture/sound is a MARKER like {{photo_1}} — a template can never contain a link of its own;
 - geometry is in fractions of the canvas (`box: [x, y, w, h]`, text `size`), so one JSON renders at 540×960 and 1080×1920;
 - the backend, not the template, sets size, quality, webhook and export target.
@@ -27,6 +28,8 @@ MAX_ELEMENTS = 10
 MAX_TEXT = 120
 MIN_SCENE_SEC, MAX_SCENE_SEC = 0.5, 15.0
 TRANSITION_SEC = 0.6
+ART_Z = 10      # the frame overlay
+TEXT_MIN_Z = 20  # text is always above photos, the frame and the clip (a template may write a smaller z)
 MAX_PHOTO_MARKERS = 10
 SIZES = {"preview": (540, 960), "hd": (1080, 1920)}
 
@@ -36,7 +39,7 @@ PHOTO = re.compile(r"^photo_(\d{1,2})$")
 
 TRANSITIONS = {
     "fade", "fadeblack", "fadewhite", "dissolve", "slideleft", "slideright", "slideup", "slidedown", "wipeleft",
-    "wiperight", "circleopen", "circleclose", "pixelize", "radial", "zoomin",
+    "wiperight", "circleopen", "circleclose", "pixelize", "radial",
 }
 FONTS = {
     "Poppins", "Playfair Display", "VT323", "Inter", "Montserrat", "Lobster", "Pacifico", "Roboto", "Oswald", "Dancing Script",
@@ -50,9 +53,13 @@ TOP_KEYS = {"scenes", "elements"}
 SCENE_KEYS = {"duration", "background", "transition", "elements"}
 ELEMENT_KEYS = {
     "image": {"type", "src", "box", "fit", "zoom", "pan", "z"},
-    "text": {"type", "text", "box", "size", "color", "font", "weight", "align", "shadow", "style", "z"},
+    "text": {"type", "text", "box", "size", "color", "font", "weight", "align", "shadow", "style", "z", "start", "duration"},
     "audio": {"type", "src", "volume"},
+    "voice": {"type", "text", "at", "volume"},  # the person's name SPOKEN over the song at second `at`
 }
+MAX_VOICES = 3
+MAX_VOICE_TEXT = 40
+VOICE_MARKERS = ("name", "sender")
 HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 
@@ -73,6 +80,12 @@ class RenderContext:
     color_to: str = "#0A0A0F"
     values: dict[str, str] = field(default_factory=dict)  # name, sender, fun_fact, occasion
     watermark: bool = True
+    # Spoken-name slots from the template's song spec ({"at", "text", "volume"}); used when the movie JSON has no voice element.
+    song_slots: list[dict] = field(default_factory=list)
+    voice: str = "en-IN-NeerjaNeural"  # chosen by the backend (settings), never by a template
+    voice_model: str = "azure"
+    # Photos cut for one frame each (services/photo_prep.py). Key = "{photo number}:{width}x{height}" of the frame at HD size.
+    photo_variants: dict[str, str] = field(default_factory=dict)
 
 
 # ───────────────────────────────────────────────────────────── validation
@@ -82,6 +95,10 @@ def _is_num(v: Any) -> bool:
 
 def _markers(text: str) -> list[str]:
     return [m.strip() for m in MARKER.findall(text)]
+
+
+def _is_marker(src: Any, name: str) -> bool:
+    return isinstance(src, str) and name in _markers(src)
 
 
 def photo_numbers(movie: dict) -> set[int]:
@@ -122,7 +139,7 @@ def _check_element(el: Any, where: str, *, top: bool, photos_max: int, errs: lis
         return
     kind = el.get("type")
     if kind not in ELEMENT_KEYS:
-        errs.append(f"{where}: type '{kind}' is not allowed (use image, text or audio).")
+        errs.append(f"{where}: type '{kind}' is not allowed (use image, text, audio or voice).")
         return
     extra = set(el) - ELEMENT_KEYS[kind]
     if extra:
@@ -131,7 +148,23 @@ def _check_element(el: Any, where: str, *, top: bool, photos_max: int, errs: lis
     if "z" in el and not (isinstance(el["z"], int) and not isinstance(el["z"], bool) and 0 <= el["z"] <= 30):
         errs.append(f"{where}: z must be a whole number from 0 to 30.")
 
-    if kind == "audio":
+    if kind == "voice":
+        if not top:
+            errs.append(f"{where}: voice must be in the top-level 'elements', not inside a scene.")
+        text = el.get("text")
+        if not isinstance(text, str) or not text.strip():
+            errs.append(f"{where}: voice text is empty.")
+        else:
+            if len(text) > MAX_VOICE_TEXT:
+                errs.append(f"{where}: voice text is longer than {MAX_VOICE_TEXT} characters.")
+            for m in _markers(text):
+                if m not in VOICE_MARKERS:
+                    errs.append(f"{where}: {{{{{m}}}}} cannot be spoken (allowed: {', '.join('{{' + k + '}}' for k in VOICE_MARKERS)}).")
+        if not (_is_num(el.get("at")) and 0 <= el["at"] <= MAX_SCENE_SEC):
+            errs.append(f"{where}: 'at' (the second the voice starts) must be a number from 0 to {MAX_SCENE_SEC}.")
+        if "volume" in el and not (_is_num(el["volume"]) and 0 <= el["volume"] <= 1):
+            errs.append(f"{where}: volume must be between 0 and 1.")
+    elif kind == "audio":
         if not top:
             errs.append(f"{where}: audio must be in the top-level 'elements', not inside a scene.")
         if el.get("src") != "{{audio}}":
@@ -148,6 +181,8 @@ def _check_element(el: Any, where: str, *, top: bool, photos_max: int, errs: lis
         elif number:
             if not 1 <= int(number.group(1)) <= photos_max:
                 errs.append(f"{where}: {{{{{marker}}}}} is more than the template's max photos ({photos_max}).")
+            if el.get("box") is None:
+                errs.append(f"{where}: every photo needs a box [x, y, width, height] so it can be replaced in the right place.")
         elif marker not in ("art", "background"):
             errs.append(f"{where}: unknown marker {{{{{marker}}}}} for an image.")
         if "fit" in el and el["fit"] not in FITS:
@@ -180,6 +215,10 @@ def _check_element(el: Any, where: str, *, top: bool, photos_max: int, errs: lis
             errs.append(f"{where}: shadow must be true or false.")
         if "style" in el and el["style"] not in TEXT_STYLES:
             errs.append(f"{where}: style must be one of {', '.join(sorted(TEXT_STYLES))}.")
+        if "start" in el and not (_is_num(el["start"]) and 0 <= el["start"] <= MAX_SCENE_SEC):
+            errs.append(f"{where}: start must be a number from 0 to {MAX_SCENE_SEC} seconds.")
+        if "duration" in el and not (_is_num(el["duration"]) and 0.2 <= el["duration"] <= MAX_SCENE_SEC):
+            errs.append(f"{where}: duration must be a number from 0.2 to {MAX_SCENE_SEC} seconds.")
 
 
 def validate(movie: Any, *, photos_min: int = 1, photos_max: int = 5) -> list[str]:
@@ -229,6 +268,10 @@ def validate(movie: Any, *, photos_min: int = 1, photos_max: int = 5) -> list[st
             _check_element(el, f"Top-level element {j}", top=True, photos_max=photos_max, errs=errs)
         if sum(1 for e in top if isinstance(e, dict) and e.get("type") == "audio") > 1:
             errs.append("Only one audio element is allowed.")
+        if sum(1 for e in top if isinstance(e, dict) and e.get("type") == "video") > 1:
+            errs.append("Only one background video element is allowed.")
+        if sum(1 for e in top if isinstance(e, dict) and e.get("type") == "voice") > MAX_VOICES:
+            errs.append(f"At most {MAX_VOICES} voice elements are allowed.")
 
     if errs:
         return errs
@@ -270,41 +313,102 @@ def _px(box: list[float], size: tuple[int, int]) -> dict[str, int]:
     return {"x": round(x * w), "y": round(y * h), "width": max(1, round(bw * w)), "height": max(1, round(bh * h))}
 
 
+def variant_key(k: int, box: list[float]) -> str:
+    """Name of the cut of photo k for a frame: the frame's size at HD (so preview and HD use the same file)."""
+    px = _px(box, SIZES["hd"])
+    return f"{k}:{px['width']}x{px['height']}"
+
+
+def _frame_box(el: dict) -> list[float]:
+    """Where a user photo is shown, as fractions [x, y, w, h]."""
+    return el.get("box") or [0, 0, 1, 1]
+
+
+def photo_frames(movie: dict, *, n_photos: int) -> dict[int, set[tuple[int, int]]]:
+    """{photo number: {(width, height) at HD size}} for every frame that shows a user photo with fit 'cover'.
+    Same box logic as `_image`, so the cuts made before the render always match the frames in the render."""
+    out: dict[int, set[tuple[int, int]]] = {}
+    for el in _all_elements(movie):
+        if el.get("type") != "image" or not isinstance(el.get("src"), str) or el.get("fit", "cover") != "cover":
+            continue
+        hit = next((PHOTO.match(m) for m in _markers(el["src"]) if PHOTO.match(m)), None)
+        if not hit or int(hit.group(1)) > n_photos:
+            continue
+        px = _px(_frame_box(el), SIZES["hd"])
+        out.setdefault(int(hit.group(1)), set()).add((px["width"], px["height"]))
+    return out
+
+
 def _image(el: dict, ctx: RenderContext, size: tuple[int, int], i: int) -> dict | None:
     marker = _markers(el["src"])[0]
     hit = PHOTO.match(marker)
     if hit:
         k = int(hit.group(1))
         url = ctx.photo_urls[k - 1] if k <= len(ctx.photo_urls) else None
+        if url and el.get("fit", "cover") == "cover":  # the photo already cut for this exact frame (face placed), if we have it
+            url = ctx.photo_variants.get(variant_key(k, _frame_box(el))) or url
     elif marker == "art":
         url = ctx.art_url
     else:
         url = ctx.background_url
     if not url:
         return None
-    out: dict[str, Any] = {"type": "image", "src": url, "resize": el.get("fit", "cover"), "duration": -2}
-    out.update({"position": "custom", **_px(el.get("box") or [0, 0, 1, 1], size)})
+    box = el.get("box") or [0, 0, 1, 1]
+    # No "resize" for cover: JSON2Video ignores width/height when resize is "cover" (the photo would spill out of its box).
+    # Photos are already cut to the frame's aspect (services/photo_prep.py), so the plain box fits them exactly.
+    out: dict[str, Any] = {"type": "image", "src": url, "duration": -2}
+    if el.get("fit", "cover") != "cover":
+        out["resize"] = el["fit"]
+    out.update({"position": "custom", **_px(box, size)})
     if "zoom" in el:
         out["zoom"] = el["zoom"]
     elif hit:
         out["zoom"] = 2
-    if "pan" in el or hit:
-        out["pan"] = el.get("pan", ["right", "left", "top", "bottom"][i % 4])
-    out["z-index"] = el.get("z", 1 if hit else 10 if marker == "art" else 0)
+    if "pan" in el and not hit:  # user photos only zoom slowly: a sideways pan could slide the face out of the frame
+        out["pan"] = el["pan"]
+    if hit:  # photos sit under the frame and far under the text
+        out["z-index"] = min(el.get("z", 1), 9)
+    elif marker == "art":
+        out["z-index"] = ART_Z  # fixed: above the photos, below every text
+    else:
+        out["z-index"] = el.get("z", 0)
     return out
+
+
+CHAR_WIDTH = 0.6   # average glyph width as a fraction of the font size (wide fonts + word-wrap slack)
+LINE_HEIGHT = 1.25
+MIN_FONT = 0.025   # never shrink below this (fraction of the picture width)
+
+
+def fit_font_size(text: str, size: float, box: list[float], canvas: tuple[int, int]) -> float:
+    """Largest font size (<= `size`) at which `text` fits inside `box`.
+
+    Names and fun facts are typed by users, so a long one must not spill out of the box designed for a short one.
+    All numbers are fractions of the picture WIDTH, so the same answer holds at 540 px and 1080 px.
+    """
+    box_w = box[2]
+    box_h = box[3] * canvas[1] / canvas[0]
+    while size > MIN_FONT:
+        chars_per_line = max(1, int(box_w / (CHAR_WIDTH * size)))
+        lines = -(-len(text) // chars_per_line)  # ceil
+        if lines * LINE_HEIGHT * size <= box_h:
+            break
+        size = round(size * 0.92, 4)
+    return max(size, MIN_FONT)
 
 
 def _text(el: dict, ctx: RenderContext, size: tuple[int, int]) -> dict | None:
     text = _fill_text(el["text"], ctx.values)
     if not text:
         return None
-    w, _h = size
+    box = el.get("box") or [0, 0.66, 1, 0.2]
+    font_size = fit_font_size(text, el.get("size", 0.07), box, size)
     out: dict[str, Any] = {
         "type": "text", "text": text, "style": el.get("style", "002"), "position": "custom",
-        **_px(el.get("box") or [0, 0.66, 1, 0.2], size),
+        **_px(box, size),
         "settings": {
             "font-family": el.get("font", "Poppins"),
-            "font-size": f"{round(el.get('size', 0.07) * 100, 2)}vw",
+            "font-size": f"{round(font_size * 100, 2)}vw",
             "font-weight": str(el.get("weight", 800)),
             "color": el.get("color", "#FFFFFF"),
             "text-align": el.get("align", "center"),
@@ -312,9 +416,29 @@ def _text(el: dict, ctx: RenderContext, size: tuple[int, int]) -> dict | None:
             "vertical-position": "center",
             "text-shadow": "0 4px 18px rgba(0,0,0,0.65)" if el.get("shadow", True) else "none",
         },
-        "z-index": el.get("z", 20),
+        "z-index": max(el.get("z", TEXT_MIN_Z), TEXT_MIN_Z),
     }
+    if "start" in el:  # e.g. the name caption appears exactly when the name is spoken
+        out["start"] = round(el["start"], 2)
+    if "duration" in el:
+        out["duration"] = round(el["duration"], 2)
     return out
+
+
+def _voice(ctx: RenderContext, text: str, at: float, volume: float) -> dict | None:
+    """The gift's name (or any short text with {{name}}/{{sender}}) SPOKEN at second `at`. Voice and model come from settings."""
+    spoken = _fill_text(text, ctx.values)
+    if not spoken:
+        return None
+    return {"type": "voice", "text": spoken, "voice": ctx.voice, "model": ctx.voice_model, "start": round(at, 2), "volume": volume}
+
+
+def _audio(ctx: RenderContext, volume: float) -> dict:
+    return {
+        "type": "audio", "src": ctx.audio_url, "seek": round(ctx.audio_seek, 2), "duration": ctx.duration_sec,
+        "volume": volume,
+        "fade-in": 0.3 if ctx.fade and ctx.audio_seek > 0 else 0, "fade-out": 1.2 if ctx.fade else 0,
+    }
 
 
 def render_template(movie_json: dict, ctx: RenderContext) -> dict:
@@ -333,6 +457,9 @@ def render_template(movie_json: dict, ctx: RenderContext) -> dict:
     overlaps = TRANSITION_SEC * sum(1 for i, s in enumerate(scenes) if i > 0 and s.get("transition"))
     factor = (ctx.duration_sec + overlaps) / sum(s["duration"] for s in scenes)
 
+    # The frame overlay is opaque outside the photo holes, so it must only cover scenes that HAVE a photo: a title or closing
+    # scene would otherwise show an empty frame and hide its own background.
+    art_els = [e for e in movie.get("elements") or [] if e.get("type") == "image" and _is_marker(e.get("src"), "art")]
     out_scenes = []
     for i, sc in enumerate(scenes):
         elements = []
@@ -340,6 +467,8 @@ def render_template(movie_json: dict, ctx: RenderContext) -> dict:
             built = _image(el, ctx, size, i) if el["type"] == "image" else _text(el, ctx, size)
             if built:
                 elements.append(built)
+        if art_els and _scene_photo_numbers(sc):
+            elements += [b for b in (_image(a, ctx, size, i) for a in art_els) if b]
         scene: dict[str, Any] = {
             "background-color": sc.get("background", ctx.color_to),
             "duration": round(sc["duration"] * factor, 3),
@@ -353,19 +482,37 @@ def render_template(movie_json: dict, ctx: RenderContext) -> dict:
     for el in movie.get("elements") or []:
         if el["type"] == "audio":
             if ctx.audio_url:
-                top.append({
-                    "type": "audio", "src": ctx.audio_url, "seek": round(ctx.audio_seek, 2), "duration": ctx.duration_sec,
-                    "volume": el.get("volume", 1),
-                    "fade-in": 0.3 if ctx.fade and ctx.audio_seek > 0 else 0, "fade-out": 1.2 if ctx.fade else 0,
-                })
+                top.append(_audio(ctx, el.get("volume", 1)))
+        elif el["type"] == "voice":
+            built = _voice(ctx, el["text"], el["at"], el.get("volume", 1)) if ctx.audio_url else None
+            if built:
+                top.append(built)
         elif el["type"] == "image":
+            if _is_marker(el.get("src"), "art"):
+                continue  # drawn inside the scenes that have a photo (above)
             built = _image(el, ctx, size, 0)
             if built:
                 top.append(built)
         else:
             built = _text(el, ctx, size)
             if built:
-                built["duration"] = -2
+                built.setdefault("duration", -2)
+                top.append(built)
+    # The template has a background picture: always show it, unless the frame overlay already contains it.
+    all_els = _all_elements(movie)
+    has_background = any(e.get("type") == "image" and _is_marker(e.get("src"), "background") for e in all_els)
+    frame_in_use = bool(art_els and ctx.art_url)
+    if ctx.background_url and not has_background and not frame_in_use:
+        top.insert(0, {"type": "image", "src": ctx.background_url, "resize": "cover", "position": "custom",
+                       **_px([0, 0, 1, 1], size), "duration": -2, "z-index": 0})
+    # The song was already made (and paid for) for this gift. If the template has no audio element, play it anyway.
+    if ctx.audio_url and not any(e["type"] == "audio" for e in top):
+        top.append(_audio(ctx, 1))
+    # The song spec says where the name is spoken. If the template has no voice elements, add them from the spec.
+    if ctx.audio_url and not any(e["type"] == "voice" for e in top):
+        for slot in ctx.song_slots:
+            built = _voice(ctx, slot["text"], slot["at"], slot.get("volume", 1))
+            if built:
                 top.append(built)
     if ctx.kind == "preview" and ctx.watermark:
         top.append({
@@ -375,8 +522,12 @@ def render_template(movie_json: dict, ctx: RenderContext) -> dict:
                          "text-align": "center", "horizontal-position": "center", "vertical-position": "center"},
         })
 
-    return {
+    body = {
         "resolution": "custom", "width": size[0], "height": size[1],
         "quality": "high" if ctx.kind == "hd" else "medium", "cache": True,
         "scenes": out_scenes, "elements": top,
     }
+    # Last line of defence for "every placeholder is replaced": no marker may ever reach JSON2Video.
+    if "{{" in json.dumps(body, ensure_ascii=False):
+        raise MovieTemplateError("a placeholder was left in the movie")
+    return body

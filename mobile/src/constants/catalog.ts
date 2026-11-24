@@ -1,5 +1,5 @@
 import type { IconName } from '@/components/Icon';
-import type { Mood, Occasion, Singer, TemplateStyle } from '@/api/types';
+import type { Language, Mood, MusicStyle, Occasion, Relationship, Singer, TemplateStyle, Trait } from '@/api/types';
 
 export const OCCASIONS: { id: Occasion; label: string; icon: IconName; colors: readonly [string, string]; soon?: boolean }[] = [
   { id: 'birthday', label: 'Birthday', icon: 'cake', colors: ['#FF4D8D', '#C2185B'] },
@@ -32,3 +32,49 @@ export const SINGERS: { id: Singer; label: string }[] = [
   { id: 'male', label: 'Male' },
   { id: 'duet', label: 'Duet' },
 ];
+
+// ---- Personal song choices (ids match backend/app/schemas.py and services/song_prompt.py)
+export const LANGUAGES: { id: Language; label: string }[] = [
+  { id: 'hinglish', label: 'Hinglish' },
+  { id: 'hindi', label: 'Hindi' },
+  { id: 'english', label: 'English' },
+  { id: 'punjabi', label: 'Punjabi' },
+  { id: 'tamil', label: 'Tamil' },
+  { id: 'telugu', label: 'Telugu' },
+];
+
+export const MUSIC_STYLES: { id: MusicStyle; label: string }[] = [
+  { id: 'bollywood_pop', label: 'Bollywood pop' },
+  { id: 'punjabi_bhangra', label: 'Punjabi bhangra' },
+  { id: 'acoustic', label: 'Acoustic' },
+  { id: 'lofi', label: 'Lo-fi chill' },
+  { id: 'edm_party', label: 'EDM party' },
+  { id: 'sufi', label: 'Sufi / Qawwali' },
+  { id: 'ballad', label: 'Slow ballad' },
+];
+
+export const RELATIONSHIPS: { id: Relationship; label: string }[] = [
+  { id: 'friend', label: 'Friend' },
+  { id: 'partner', label: 'Partner' },
+  { id: 'mom', label: 'Mom' },
+  { id: 'dad', label: 'Dad' },
+  { id: 'sibling', label: 'Brother / Sister' },
+  { id: 'colleague', label: 'Colleague' },
+  { id: 'relative', label: 'Relative' },
+];
+
+export const TRAITS: { id: Trait; label: string }[] = [
+  { id: 'funny', label: 'Funny' },
+  { id: 'caring', label: 'Caring' },
+  { id: 'foodie', label: 'Foodie' },
+  { id: 'always_late', label: 'Always late' },
+  { id: 'dancer', label: 'Loves dancing' },
+  { id: 'traveller', label: 'Traveller' },
+  { id: 'gamer', label: 'Gamer' },
+  { id: 'bookworm', label: 'Bookworm' },
+  { id: 'sporty', label: 'Sporty' },
+  { id: 'shy', label: 'Shy and sweet' },
+];
+
+export const MAX_TRAITS = 3;
+export const MAX_IDEA = 150;

@@ -1,4 +1,4 @@
-import type { Category, CreateGiftInput, Gift, GiftStatus, LibraryItem, Template, TemplateQuery } from './types';
+import type { Category, CreateGiftInput, Gift, GiftStatus, LibraryItem, SongDraft, SongDraftInput, Template, TemplateQuery } from './types';
 import { OCCASIONS } from '@/constants/catalog';
 import { libraryItems, templates } from './mockData';
 
@@ -10,6 +10,7 @@ const JOB_MS = 14_000;
 type StoredGift = Omit<Gift, 'status' | 'progress'> & { startedAt: number; paid: boolean };
 const gifts = new Map<string, StoredGift>();
 let giftSeq = 2000;
+const madeDrafts = new Set<string>();
 
 const statusFor = (p: number): GiftStatus => {
   if (p < 0.08) return 'queued';
@@ -76,6 +77,14 @@ export const mockApi = {
     };
     gifts.set(id, stored);
     return materialize(stored);
+  },
+
+  /** Mock: a public sample track after a short wait, and the same "one song per flow" rule as the server. */
+  async makeSongDraft(input: SongDraftInput): Promise<SongDraft> {
+    await delay(2200);
+    if (madeDrafts.has(input.draftId)) throw new Error('One song per video. Your song is ready; extra songs are coming soon.');
+    madeDrafts.add(input.draftId);
+    return { audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3', durationSec: 15, triesUsed: 1, triesLeft: 0 };
   },
 
   async getGift(id: string): Promise<Gift> {

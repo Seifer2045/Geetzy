@@ -1,6 +1,8 @@
 'use client';
 
 export type SlotShape = { x: number; y: number; w: number; h: number; radius?: number; rotate?: number };
+/** Video layout with no decorative frame (id of the row in the layouts table). */
+export const FREE_LAYOUT = 'free';
 export type LayoutOption = { id: string; name: string; kind: 'video' | 'image'; slots: SlotShape[]; photo_count: number };
 
 /** A 9:16 sketch of the layout: each rectangle is where one user photo goes. */
@@ -45,9 +47,11 @@ export function LayoutPicker({
             type="button" key={l.id} onClick={() => onChange(l.id)} aria-pressed={value === l.id}
             className={`card p-2 text-center text-xs transition ${value === l.id ? 'border-violet bg-white/10 shadow-glow' : 'hover:bg-white/10'}`}
           >
-            <LayoutSketch slots={l.slots} className="w-full" />
+            {l.id === FREE_LAYOUT
+              ? <div className="flex aspect-[9/16] w-full items-center justify-center rounded-md border border-dashed border-line px-1 text-[11px] text-ink-muted">Photos placed by the design</div>
+              : <LayoutSketch slots={l.slots} className="w-full" />}
             <span className="mt-1 block font-semibold text-ink">{l.name}</span>
-            <span className="text-ink-faint">{l.photo_count} photo{l.photo_count > 1 ? 's' : ''}</span>
+            <span className="text-ink-faint">{l.id === FREE_LAYOUT ? 'recommended' : `${l.photo_count} photo${l.photo_count > 1 ? 's' : ''}`}</span>
           </button>
         ))}
       </div>

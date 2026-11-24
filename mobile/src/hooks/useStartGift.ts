@@ -5,7 +5,7 @@ import { router } from 'expo-router';
 import { queryKeys, useCreateGift } from '@/api/hooks';
 import type { Template } from '@/api/types';
 import { uploadGiftFiles } from '@/api/upload';
-import { useCreateFlow } from '@/store/createFlow';
+import { newDraftId, useCreateFlow } from '@/store/createFlow';
 
 /** Uploads the photos (and own song), sends the draft to the API and opens the Making screen. */
 export const useStartGift = () => {
@@ -41,7 +41,8 @@ export const useStartGift = () => {
         photoPaths: files.photoPaths,
         song: silent ? null : s.songPayload(files.songPath),
       });
-      s.set({ giftId: gift.id });
+      // The song now belongs to this gift; the next gift gets a new draft id (and its own song).
+      s.set({ giftId: gift.id, songDraft: null, draftId: newDraftId() });
       router.push({ pathname: '/create/making', params: { giftId: gift.id } });
     } catch (e) {
       Alert.alert('Could not start', e instanceof Error ? e.message : 'Please try again.');

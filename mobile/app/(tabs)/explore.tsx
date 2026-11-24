@@ -28,6 +28,10 @@ export default function Explore() {
   const [occasion, setOccasion] = useState<string | undefined>();
   const [style, setStyle] = useState<TemplateStyle | undefined>();
   const { data = [], isLoading } = useTemplates({ category: occasion, style, q: query || undefined });
+  // Real numbers from the database (the unfiltered list is cached, Home loads the same one).
+  const { data: all = [] } = useTemplates();
+  const styleCount = (id: TemplateStyle) => all.filter((t) => t.style === id).length;
+  const shaadi = all.filter((t) => (t.category ?? t.occasion) === 'anniversary');
   const cardW = (width - screenPadding * 2 - 12) / 2;
 
   const top = useMemo(() => [...data].sort((a, b) => b.madeCount - a.madeCount), [data]);
@@ -68,7 +72,7 @@ export default function Explore() {
         </ScrollView>
       </Animated.View>
 
-      {!query ? (
+      {!query && shaadi.length > 0 ? (
         <Animated.View entering={enterUp(stagger(2))} style={{ paddingHorizontal: screenPadding }}>
           <PressableScale onPress={() => setOccasion('anniversary')} accessibilityRole="button" accessibilityLabel="Shaadi Season collection">
             <GradientFill colors={gradients.collection} style={styles.featured}>
@@ -84,7 +88,7 @@ export default function Explore() {
                 Shaadi Season
               </AppText>
               <AppText variant="caption" style={{ opacity: 0.8 }}>
-                12 templates · from ₹49
+                {`${shaadi.length} template${shaadi.length === 1 ? '' : 's'} · from ₹${Math.min(...shaadi.map((t) => t.price))}`}
               </AppText>
             </GradientFill>
           </PressableScale>
@@ -112,7 +116,7 @@ export default function Explore() {
                   {s.label}
                 </AppText>
                 <AppText variant="caption" color="muted" style={{ fontSize: 11 }}>
-                  {`${s.count} templates`}
+                  {`${styleCount(s.id)} template${styleCount(s.id) === 1 ? '' : 's'}`}
                 </AppText>
               </PressableScale>
             );

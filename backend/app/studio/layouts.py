@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from ..db import db, one
 
 CANVAS = (1080, 1920)
+FREE_LAYOUT = "free"  # video layout with no decorative frame: the video design places every photo
 _TTL = 60.0
 _cache: dict[str, tuple[float, "Layout"]] = {}
 

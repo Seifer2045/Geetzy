@@ -97,7 +97,7 @@ export default function Details() {
           </Animated.View>
 
           <Animated.View entering={enterUp(stagger(2))} style={{ gap: 16 }}>
-            <Input label="Their name" value={flow.recipientName} onChangeText={(v) => flow.set({ recipientName: v })} placeholder="Priya" autoCapitalize="words" maxLength={20} />
+            <Input label="Their nickname or funny name" value={flow.recipientName} onChangeText={(v) => flow.set({ recipientName: v })} placeholder="Chotu, Pari, Golu" autoCapitalize="words" maxLength={20} />
             <Input label="From" value={flow.senderName} onChangeText={(v) => flow.set({ senderName: v })} placeholder="Rahul" autoCapitalize="words" maxLength={20} />
             <Input
               label="Something fun about them"

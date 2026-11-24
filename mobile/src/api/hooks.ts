@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { env } from '@/config/env';
 import { api } from './client';
-import type { CreateGiftInput, TemplateQuery } from './types';
+import type { CreateGiftInput, SongDraftInput, TemplateQuery } from './types';
 
 export const queryKeys = {
   templates: (q: TemplateQuery) => ['templates', q] as const,
@@ -52,6 +52,9 @@ export const useCreateGift = () => {
     },
   });
 };
+
+/** "Make my song": one personal song per create flow. */
+export const useMakeSongDraft = () => useMutation({ mutationFn: (input: SongDraftInput) => api.makeSongDraft(input) });
 
 export const useVerifyPayment = () => {
   const qc = useQueryClient();

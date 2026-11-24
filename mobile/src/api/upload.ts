@@ -4,7 +4,8 @@ import { getSupabase } from '@/auth/supabase';
 import { env } from '@/config/env';
 
 const BUCKET = 'gift-uploads';
-const MAX_SIDE = 1440;
+// 2048 px: a 9:16 crop of a portrait photo still has more than 1080 px across, so the HD video stays sharp.
+const MAX_SIDE = 2048;
 
 const randomId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
@@ -18,7 +19,7 @@ const AUDIO_TYPES: Record<string, string> = {
   ogg: 'audio/ogg',
 };
 
-/** Smaller photos upload faster on mobile data; the video is 1080 px wide anyway. HEIC becomes JPEG. */
+/** Big photos are shrunk to 2048 px (faster upload, still sharp in the 1080 px video). HEIC becomes JPEG. */
 const shrinkPhoto = async (uri: string): Promise<string> => {
   const original = await ImageManipulator.manipulate(uri).renderAsync();
   const tooBig = Math.max(original.width, original.height) > MAX_SIDE;
@@ -27,7 +28,7 @@ const shrinkPhoto = async (uri: string): Promise<string> => {
         .resize(original.width >= original.height ? { width: MAX_SIDE } : { height: MAX_SIDE })
         .renderAsync()
     : original;
-  const saved = await image.saveAsync({ compress: 0.8, format: SaveFormat.JPEG });
+  const saved = await image.saveAsync({ compress: 0.85, format: SaveFormat.JPEG });
   return saved.uri;
 };
 

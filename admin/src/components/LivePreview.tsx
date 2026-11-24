@@ -34,7 +34,7 @@ export function LivePreview(p: PreviewProps) {
   const sceneLen = p.durationSec / sceneCount;
 
   return (
-    <div className="grid gap-6 md:grid-cols-[240px_1fr]">
+    <div className="space-y-4">
       <div>
         <div className="relative mx-auto aspect-[9/16] w-[220px] overflow-hidden rounded-[28px] border-4 border-white/15 shadow-glow"
           style={{ background: `linear-gradient(180deg, ${p.colorFrom}, ${p.colorTo})` }}>
@@ -99,7 +99,7 @@ export function LivePreview(p: PreviewProps) {
           <li>🖼 Background: <b className="text-ink">{p.bgUrl ? 'your upload' : 'gradient from the two colours'}</b></li>
         </ul>
         <p className="rounded-xl border border-line bg-white/[0.04] p-2 text-xs text-ink-faint">
-          This is a quick sketch to check text, colours and photo frames. If you use a Grok design, the real look comes from its JSON. Use <b>Save &amp; generate preview</b> below to render the real video
+          This is a quick sketch to check text, colours and photo frames. If you use a JSON2Video design, the real look comes from its JSON. Use <b>Save &amp; generate preview</b> below to render the real video
           (costs about {p.durationSec} JSON2Video credits{p.songLabel.startsWith('AI') ? ' and one ElevenLabs song' : ''}).
         </p>
       </div>

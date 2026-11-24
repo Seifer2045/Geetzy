@@ -19,7 +19,7 @@ API = "https://api.elevenlabs.io/v1/music"
 OUTPUT_FORMAT = "mp3_44100_64"
 TIMEOUT_SEC = 120
 MIN_MS, MAX_MS = 3_000, 600_000
-PROMPT_MAX = 2_000
+PROMPT_MAX = 4_000  # ElevenLabs' own limit is the real ceiling (verify); longer admin prompts are trimmed, see build_prompt
 EST_COST_SONG_USD = 0.03  # rough estimate for ~15 s, shown on the admin dashboard only
 
 STYLE_HINT = {
@@ -40,12 +40,21 @@ class ElevenLabsError(RuntimeError):
     pass
 
 
-def build_prompt(*, direction: str, style: str, mood: str = "happy", singer: str = "female", seconds: int = 15) -> str:
-    """The admin's audio prompt (already filled with the user's name etc.) + a short style tail."""
-    tail = f"{STYLE_HINT.get(style, 'Indian pop')}, {MOOD_HINT.get(mood, 'upbeat')}, {SINGER_HINT.get(singer, 'vocals')}. " \
-           f"Exactly {seconds} seconds, strong start, clean ending."
-    text = " ".join((direction or "").split())
-    return (f"{text}\n{tail}" if text else tail)[:PROMPT_MAX]
+def build_prompt(
+    *, direction: str, style: str, mood: str = "happy", singer: str = "female", seconds: int = 15,
+    instrumental: bool = False, structure: str = "",
+) -> str:
+    """The admin's audio prompt (already filled with the user's name etc.) + a short style tail.
+
+    `instrumental` = the shared template song: no vocals, and room for a spoken name (added later by JSON2Video).
+    `structure` = e.g. "intro 0-3s, hook 3-10s, outro 10-15s" from the song spec.
+    """
+    voice = "instrumental only, no vocals, a clear gap for a spoken name" if instrumental else SINGER_HINT.get(singer, "vocals")
+    tail = f"{STYLE_HINT.get(style, 'Indian pop')}, {MOOD_HINT.get(mood, 'upbeat')}, {voice}. " \
+           f"Exactly {seconds} seconds, strong start, clean ending." + (f" Structure: {structure}." if structure else "")
+    # A very long admin prompt is trimmed, never the tail: the tail carries the length and style the song must follow.
+    text = " ".join((direction or "").split())[: max(0, PROMPT_MAX - len(tail) - 1)]
+    return f"{text}\n{tail}" if text else tail[:PROMPT_MAX]
 
 
 def song_hash(prompt: str, length_ms: int, instrumental: bool) -> str:

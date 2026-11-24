@@ -94,9 +94,10 @@ export function StudioPanel({
               ? s.preview_type === 'image'
                 // eslint-disable-next-line @next/next/no-img-element
                 ? <img src={s.preview_url} alt="Preview" className="h-full w-full object-cover" />
-                : <video key={s.preview_url} src={s.preview_url} controls muted playsInline loop className="h-full w-full object-cover" />
-              : <span className="p-4 text-center text-xs text-ink-faint">{isImage ? 'Preview uses sample photos' : 'The real preview uses sample photos, a sample name and your song settings'}</span>}
+                : <video key={s.preview_url} src={s.preview_url} controls playsInline loop className="h-full w-full object-cover" />
+              : <span className="p-4 text-center text-xs text-ink-faint">{isImage ? 'Preview uses sample photos' : 'The preview uses sample photos, a sample name and the song (AI song from your prompt, or your own)'}</span>}
           </div>
+          {!isImage && s.preview_status === 'ready' && <p className="text-xs text-ink-faint">Press play: the preview includes the song. Sound is on.</p>}
           {s.preview_error && <p className="text-xs text-danger">{s.preview_error}</p>}
           <button className="btn-glass w-full" disabled={pending || previewBusy || s.art_status !== 'ready'}
             onClick={() => run(() => generatePreview(id), { preview_status: 'queued', preview_error: null })}>

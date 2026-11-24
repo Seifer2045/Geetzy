@@ -5,7 +5,7 @@ import { PLACEHOLDERS, SAMPLE, fillExample } from '@/lib/placeholders';
 
 /** Textarea + clickable placeholder chips + a live "example for Priya" so the admin sees what users will get. */
 export function PromptField({
-  name, label, value, onChange, placeholder, keys, help, maxLength = 1500,
+  name, label, value, onChange, placeholder, keys, help, maxLength,
 }: {
   name: string; label: string; value: string; onChange: (v: string) => void; placeholder?: string;
   keys: ReadonlyArray<(typeof PLACEHOLDERS)[number]['key']>; help?: string; maxLength?: number;
@@ -36,7 +36,7 @@ export function PromptField({
             {`{${p.key}}`}
           </button>
         ))}
-        <span className="ml-auto text-xs text-ink-faint">{value.length}/{maxLength}</span>
+        <span className="ml-auto text-xs text-ink-faint">{maxLength ? `${value.length}/${maxLength}` : `${value.length} characters`}</span>
       </div>
       {help && <p className="mt-1 text-xs text-ink-faint">{help}</p>}
       {value.trim() && keys.length > 1 && (

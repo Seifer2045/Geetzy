@@ -21,11 +21,15 @@ class Settings(BaseSettings):
     # AI songs: ElevenLabs Music. Empty key = AI songs fail with a clear message (own songs still work).
     elevenlabs_api_key: str = ""
     elevenlabs_model: str = "music_v1"
+    # The personal song the user makes on the song screen: ONE per create flow (draft id), plus a daily cap per user.
+    song_drafts_per_day: int = 5
 
-    # xAI Grok writes the JSON movie template (admin click only, never per gift). Model name: verify on the first call.
-    xai_api_key: str = ""
-    xai_model: str = "grok-4"
-    xai_calls_per_day: int = 40  # all admins together; protects the xAI bill
+    # The voice that SPEAKS the person's name over the shared song (JSON2Video "voice" element). Names are from memory:
+    # verify voice name + model on the first real render. Chosen here, never by a template.
+    name_voice: str = "en-IN-NeerjaNeural"
+    name_voice_model: str = "azure"
+    song_jobs_per_day: int = 30  # ElevenLabs shared-song generations from the admin, all admins together
+
 
     @property
     def base_url(self) -> str:

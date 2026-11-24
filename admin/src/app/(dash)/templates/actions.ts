@@ -8,7 +8,7 @@ import { assertAdmin, audit } from '@/lib/auth';
 import { db } from '@/lib/supabase/admin';
 import { templateMediaUrl } from '@/lib/storage';
 import { nearestTier } from '@/lib/pricing';
-import { validateMovieJson } from '@/lib/backend';
+import { fetchPreset, fetchPresets, validateMovieJson, validateSongJson, type PresetSummary } from '@/lib/backend';
 
 export type TplState = { ok?: boolean; error?: string; message?: string };
 
@@ -25,9 +25,9 @@ const schema = z
     style: z.enum(['bollywood', 'retro', 'genz']),
     layout_id: z.string().max(40).optional(),
     video_prompt: z.string().trim().max(300),
-    movie_prompt: z.string().trim().max(1500),
     movie_json: z.string().max(25000),
-    song_prompt: z.string().trim().max(1500),
+    song_json: z.string().max(5000),
+    song_prompt: z.string().trim(),
     song_instrumental: z.boolean(),
     default_song_path: uploadPath.optional(),
     default_song_start_sec: z.coerce.number().min(0).max(3600),
@@ -62,8 +62,8 @@ export async function saveTemplate(_prev: TplState, form: FormData): Promise<Tpl
     style: form.get('style'),
     layout_id: opt(form.get('layout_id')),
     video_prompt: form.get('video_prompt') ?? '',
-    movie_prompt: form.get('movie_prompt') ?? '',
     movie_json: form.get('movie_json') ?? '',
+    song_json: form.get('song_json') ?? '',
     song_prompt: form.get('song_prompt') ?? '',
     song_instrumental: form.get('song_instrumental') === 'on',
     default_song_path: opt(form.get('default_song_path')),
@@ -95,7 +95,7 @@ export async function saveTemplate(_prev: TplState, form: FormData): Promise<Tpl
     return { error: 'Advanced video settings must be a JSON object, e.g. {"font":"Poppins"}.' };
   }
 
-  // Movie template (written by Grok or by hand): must pass the backend's rules before it is saved.
+  // Video design (JSON pasted from the JSON2Video Editor, or a starter template): must pass the backend's rules before it is saved.
   let movieJson: unknown = null;
   const movieText = v.movie_json.trim();
   if (movieText) {
@@ -106,6 +106,19 @@ export async function saveTemplate(_prev: TplState, form: FormData): Promise<Tpl
     }
     const problems = await validateMovieJson(movieJson, v.photos_min, v.photos_max);
     if (problems.length) return { error: `Video design: ${problems.slice(0, 3).join(' ')}` };
+  }
+
+  // Shared-song spec (sections + where the name is spoken): same rules as the backend uses when it makes the song.
+  let songJson: unknown = null;
+  const songText = v.song_json.trim();
+  if (songText) {
+    try {
+      songJson = JSON.parse(songText);
+    } catch {
+      return { error: 'The song JSON is not valid JSON. Use Validate to see where.' };
+    }
+    const problems = await validateSongJson(songJson, v.duration_sec);
+    if (problems.length) return { error: `Song: ${problems.slice(0, 3).join(' ')}` };
   }
 
   const supabase = db();
@@ -138,7 +151,6 @@ export async function saveTemplate(_prev: TplState, form: FormData): Promise<Tpl
     style: v.style,
     layout_id: layout?.id ?? null,
     video_prompt: isImage ? '' : v.video_prompt,
-    movie_prompt: isImage ? '' : v.movie_prompt,
     song_prompt: isImage ? '' : v.song_prompt,
     song_instrumental: !isImage && v.song_instrumental,
     song_provider: null, // ElevenLabs is the only maker; null = server default
@@ -168,20 +180,33 @@ export async function saveTemplate(_prev: TplState, form: FormData): Promise<Tpl
 
   if (v.id) {
     const { data: existing } = await supabase.from('templates')
-      .select('output_type,layout_id,art_upload_path,color_from,color_to,art_status,preview_status,duration_sec,default_song_path,default_song_start_sec,song_prompt,video_prompt,photos_max,song_mode,style,movie_json,movie_status')
+      .select('output_type,layout_id,art_upload_path,color_from,color_to,art_status,preview_status,duration_sec,default_song_path,default_song_start_sec,song_prompt,video_prompt,photos_max,song_mode,style,movie_json,song_json,song_status,song_instrumental')
       .eq('id', v.id).maybeSingle();
     if (!existing) return { error: 'Template not found.' };
     if (existing.output_type !== cat.output_type) return { error: 'You cannot move a template to a category of the other type.' };
+
+    // A shared song made by the backend owns the song fields. A page that was open while it was being made still shows
+    // the old values, so saving must not put them back (that would erase the song). "Remove shared song" is the only way out.
+    const sharedSong = !!existing.song_json && existing.song_status === 'ready';
+    let songChanged = false;
+    if (sharedSong) {
+      Object.assign(row, {
+        song_mode: 'fixed', default_song_path: existing.default_song_path, default_song_start_sec: existing.default_song_start_sec,
+        song_instrumental: existing.song_instrumental,
+      });
+      songChanged = !!songJson && JSON.stringify(songJson) !== JSON.stringify(existing.song_json);
+      if (songChanged) Object.assign(row, { song_json: songJson });
+    }
 
     // The art (free, Pillow) depends on layout + uploaded background (or the colours when there is none).
     const artChanged = existing.layout_id !== row.layout_id || existing.art_upload_path !== row.art_upload_path
       || (!row.art_upload_path && (existing.color_from !== v.color_from || existing.color_to !== v.color_to));
     // The preview video depends on all of these: a stale one must not be published.
     const previewKeys = ['duration_sec', 'default_song_path', 'default_song_start_sec', 'song_prompt', 'video_prompt', 'photos_max', 'song_mode', 'style'] as const;
-    const previewStale = artChanged || previewKeys.some((k) => existing[k] !== row[k]);
+    const previewStale = artChanged || songChanged || previewKeys.some((k) => existing[k] !== row[k]);
     const busyNow = ['queued', 'running'].includes(existing.art_status) || ['queued', 'running'].includes(existing.preview_status);
 
-    // Hand-edited or cleared design. Grok's own result is saved by the backend job, so an unchanged JSON is left alone.
+    // A pasted / changed / cleared design. An unchanged JSON is left alone.
     const newMovie = isImage ? null : movieJson;
     const movieChanged = JSON.stringify(newMovie) !== JSON.stringify(existing.movie_json ?? null);
     if (movieChanged) {
@@ -299,40 +324,78 @@ export async function setPublished(id: string, publish: boolean): Promise<TplSta
 export type StudioStatus = {
   art_status: string; art_error: string | null; preview_status: string; preview_error: string | null;
   status: string; art_bg_url: string | null; preview_url: string | null; preview_type: 'video' | 'image';
-  movie_status: string; movie_error: string | null; movie_json: string;
+  song_status: string; song_error: string | null; song_json: string;
 };
 
 /** One tiny row read, polled every few seconds while a job runs. */
 export async function getStudioStatus(id: string): Promise<StudioStatus | null> {
   await assertAdmin();
   const { data } = await db().from('templates')
-    .select('art_status,art_error,preview_status,preview_error,status,art_bg_path,preview_url,output_type,movie_status,movie_error,movie_json').eq('id', id).maybeSingle();
+    .select('art_status,art_error,preview_status,preview_error,status,art_bg_path,preview_url,output_type,song_status,song_error,song_json').eq('id', id).maybeSingle();
   if (!data) return null;
   return {
     art_status: data.art_status, art_error: data.art_error, preview_status: data.preview_status,
     preview_error: data.preview_error, status: data.status, art_bg_url: templateMediaUrl(data.art_bg_path),
     preview_url: data.preview_url, preview_type: data.output_type === 'image' ? 'image' : 'video',
-    movie_status: data.movie_status, movie_error: data.movie_error,
-    movie_json: data.movie_json ? JSON.stringify(data.movie_json, null, 2) : '',
+    song_status: data.song_status, song_error: data.song_error,
+    song_json: data.song_json ? JSON.stringify(data.song_json, null, 2) : '',
   };
 }
 
-/** Generate with Grok: saves the brief, then the DB trigger starts the backend job (xAI is called there, once). */
-export async function generateMovie(id: string, prompt: string, force: boolean): Promise<TplState> {
+/** "Generate song": ONE ElevenLabs song for the whole template (no name inside). The DB trigger starts the backend job. */
+export async function generateSong(id: string): Promise<TplState> {
   const admin = await assertAdmin();
-  const brief = prompt.trim();
-  if (brief.length < 10) return { error: 'Describe the video in a sentence or two first.' };
-  if (brief.length > 1500) return { error: 'The brief is too long (max 1500 characters).' };
-  const { data: t } = await db().from('templates').select('output_type').eq('id', id).maybeSingle();
+  const { data: t } = await db().from('templates').select('output_type,song_prompt').eq('id', id).maybeSingle();
   if (!t) return { error: 'Template not found. Save it first.' };
-  if (t.output_type === 'image') return { error: 'Photo templates do not use a video design.' };
-  const fields: Record<string, unknown> = { movie_prompt: brief, movie_status: 'queued', movie_error: null };
-  if (force) fields.movie_hash = null; // same brief again = no xAI call, unless the admin asks for a new design
-  const { data, error } = await db().from('templates').update(fields).eq('id', id).in('movie_status', ['none', 'ready', 'error']).select('id');
+  if (t.output_type === 'image') return { error: 'Photo templates have no song.' };
+  if (!t.song_prompt?.trim()) return { error: 'Write the song idea and press Save first.' };
+  const { data, error } = await db().from('templates')
+    .update({ song_status: 'queued', song_error: null }).eq('id', id).in('song_status', ['none', 'ready', 'error']).select('id');
   if (error) return { error: error.message };
-  if (!data?.length) return { error: 'Grok is already working on this template.' };
-  await audit(admin.id, 'template.generate_movie', { type: 'template', id }, { force });
+  if (!data?.length) return { error: 'A song is already being made.' };
+  await audit(admin.id, 'template.generate_song', { type: 'template', id });
   return { ok: true };
+}
+
+/** Back to normal songs (AI / own song chosen by each user). Existing gifts keep their frozen design. */
+export async function removeSong(id: string): Promise<TplState> {
+  const admin = await assertAdmin();
+  const { error } = await db().from('templates').update({
+    song_json: null, song_status: 'none', song_error: null, default_song_path: null, default_song_start_sec: 0,
+    song_mode: 'both', status: 'draft', preview_status: 'none',
+  }).eq('id', id);
+  if (error) return { error: error.message };
+  await audit(admin.id, 'template.remove_song', { type: 'template', id });
+  revalidatePath('/templates'); revalidatePath(`/templates/${id}`);
+  return { ok: true };
+}
+
+export async function validateSong(jsonText: string, durationSec: number): Promise<{ errors: string[] }> {
+  await assertAdmin();
+  if (!jsonText.trim()) return { errors: [] };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch (e) {
+    return { errors: [`Not valid JSON: ${e instanceof Error ? e.message : 'check the commas and quotes'}`] };
+  }
+  return { errors: await validateSongJson(parsed, durationSec) };
+}
+
+/** The starter templates for the "Start from a starter" picker. */
+export async function listPresets(): Promise<{ presets: PresetSummary[]; error?: string }> {
+  await assertAdmin();
+  const presets = await fetchPresets();
+  if (!presets) return { presets: [], error: 'Could not load the starter templates. Check BACKEND_URL and INTERNAL_SECRET, and that the backend is deployed.' };
+  return { presets };
+}
+
+/** One starter: the JSON text to put in the design box, plus the photo range it was made for. */
+export async function loadPreset(id: string): Promise<{ json?: string; photosMin?: number; photosMax?: number; name?: string; error?: string }> {
+  await assertAdmin();
+  const preset = await fetchPreset(id);
+  if (!preset) return { error: 'Could not load that starter template.' };
+  return { json: JSON.stringify(preset.movie, null, 2), photosMin: preset.photos_min, photosMax: preset.photos_max, name: preset.name };
 }
 
 /** The Validate button: same rules the backend uses before it renders anything. */

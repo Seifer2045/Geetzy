@@ -5,6 +5,7 @@ from postgrest.exceptions import APIError
 from ..auth import AuthUser, current_user
 from ..db import MEDIA_BUCKET, UPLOADS_BUCKET, db, one, remove_folder
 from ..schemas import CreateGiftInput, Gift, LibraryItem
+from ..services.song_draft import approved_draft
 from .common import GIFT_SELECT, check_own_path, ensure_active, own_gift, to_gift
 
 router = APIRouter()
@@ -28,7 +29,9 @@ def create_gift(body: CreateGiftInput, user: AuthUser = Depends(current_user)):
         if mode == "upload":
             raise HTTPException(422, "This template needs your own song.")
         song = {"source": "ai", "mood": body.song.mood, "singer": body.song.singer,
-                "version": body.song.version, "lyrics": body.song.lyrics.strip()}
+                "version": body.song.version, "lyrics": body.song.lyrics.strip(), "prefs": body.song.prefs.model_dump()}
+        if body.song.draft_id:  # the song the user already heard and approved: the video reuses it, no second ElevenLabs call
+            song["audio_path"] = approved_draft(user.id, body.song.draft_id)["audio_path"]
     else:
         if mode == "ai":
             raise HTTPException(422, "This template uses an AI song.")
@@ -70,8 +73,9 @@ def library(user: AuthUser = Depends(current_user)):
     items = []
     for r in rows:
         is_image = r["templates"].get("output_type") == "image"
-        status = "hd" if r["status"] == "paid" else "preview" if r["status"] == "preview_ready" else "making"
-        if is_image and status != "making":
+        status = ("hd" if r["status"] == "paid" else "preview" if r["status"] == "preview_ready"
+                  else "failed" if r["status"] == "failed" else "making")
+        if is_image and status not in ("making", "failed"):
             status = "photo"
         items.append(LibraryItem(
             id=f"LIB-{r['code']}", kind="photo" if is_image else "video", title=f"For {r['recipient_name']}",

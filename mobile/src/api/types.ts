@@ -61,8 +61,37 @@ export type TemplateQuery = {
   q?: string;
 };
 
+export type Language = 'hindi' | 'hinglish' | 'english' | 'punjabi' | 'tamil' | 'telugu';
+export type MusicStyle = 'bollywood_pop' | 'punjabi_bhangra' | 'acoustic' | 'lofi' | 'edm_party' | 'sufi' | 'ballad';
+export type Relationship = 'friend' | 'partner' | 'mom' | 'dad' | 'sibling' | 'colleague' | 'relative';
+export type Trait = 'funny' | 'caring' | 'foodie' | 'always_late' | 'dancer' | 'traveller' | 'gamer' | 'bookworm' | 'sporty' | 'shy';
+
+/** What makes the AI song personal (the server turns this into the ElevenLabs prompt). */
+export type SongPrefs = {
+  language: Language;
+  musicStyle: MusicStyle | null;
+  relationship: Relationship | null;
+  /** Up to 3. */
+  traits: Trait[];
+  /** Free text, max 150 characters. */
+  idea: string;
+};
+
+/** The song the user makes on the song screen BEFORE the gift exists (one per create flow). */
+export type SongDraftInput = {
+  draftId: string;
+  templateId: string;
+  recipientName: string;
+  senderName: string;
+  funFact: string;
+  mood: Mood;
+  singer: Singer;
+  prefs: SongPrefs;
+};
+export type SongDraft = { audioUrl: string; durationSec: number; triesUsed: number; triesLeft: number };
+
 export type SongSource =
-  | { type: 'ai'; mood: Mood; singer: Singer; version: number; lyrics: string }
+  | { type: 'ai'; mood: Mood; singer: Singer; version: number; lyrics: string; draftId?: string; prefs: SongPrefs }
   | {
       type: 'upload';
       fileName: string;
@@ -117,7 +146,7 @@ export type LibraryItem = {
   kind: LibraryKind;
   title: string;
   subtitle: string;
-  status: 'hd' | 'preview' | 'making' | 'draft' | 'photo';
+  status: 'hd' | 'preview' | 'making' | 'failed' | 'draft' | 'photo';
   progress: number;
   colors: readonly [string, string];
   giftId: string | null;

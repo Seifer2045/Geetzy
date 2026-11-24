@@ -22,5 +22,10 @@ def fill(text: str | None, *, name: str = "", sender: str = "", fun_fact: str = 
     return _PATTERN.sub(lambda m: _clean(values[m.group(1)], MAX_VALUE[m.group(1)]), text or "")
 
 
+def strip(text: str | None) -> str:
+    """Removes every known placeholder (for the SHARED template song, which must not contain any user's name)."""
+    return " ".join(_PATTERN.sub("", text or "").split())
+
+
 def used_keys(text: str | None) -> set[str]:
     return set(_PATTERN.findall(text or ""))

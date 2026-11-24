@@ -26,6 +26,7 @@ const STATUS: Record<LibraryItem['status'], { label: string; tone: 'success' | '
   hd: { label: 'HD', tone: 'success' },
   preview: { label: 'PREVIEW', tone: 'gold' },
   making: { label: 'MAKING', tone: 'pink' },
+  failed: { label: 'FAILED', tone: 'muted' },
   photo: { label: 'PHOTO', tone: 'light' },
   draft: { label: 'DRAFT', tone: 'muted' },
 };
@@ -58,7 +59,7 @@ export default function Library() {
   const waiting = data.find((d) => d.status === 'preview');
 
   const openItem = (item: LibraryItem) => {
-    if (item.status === 'making' && item.giftId) router.push({ pathname: '/create/making', params: { giftId: item.giftId } });
+    if ((item.status === 'making' || item.status === 'failed') && item.giftId) router.push({ pathname: '/create/making', params: { giftId: item.giftId } });
     else if (item.giftId) router.push({ pathname: '/create/preview', params: { giftId: item.giftId } });
     else if (item.kind === 'draft') router.push('/create/templates');
   };

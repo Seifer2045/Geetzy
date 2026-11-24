@@ -3,7 +3,8 @@ import { notFound } from 'next/navigation';
 import { requireAdmin } from '@/lib/auth';
 import { db } from '@/lib/supabase/admin';
 import { templateMediaUrl } from '@/lib/storage';
-import { TemplateStudio, type TemplateData } from '@/components/TemplateStudio';
+import { TemplateStudio } from '@/components/TemplateStudio';
+import type { TemplateData } from '@/lib/templateData';
 import type { LayoutOption } from '@/components/LayoutPicker';
 import type { StudioStatus } from '../actions';
 
@@ -25,8 +26,8 @@ export default async function EditTemplate({ params, searchParams }: Props) {
     art_status: t.art_status, art_error: t.art_error, preview_status: t.preview_status, preview_error: t.preview_error,
     status: t.status, art_bg_url: templateMediaUrl(t.art_bg_path), preview_url: t.preview_url,
     preview_type: isImage ? 'image' : 'video',
-    movie_status: t.movie_status, movie_error: t.movie_error,
-    movie_json: t.movie_json ? JSON.stringify(t.movie_json, null, 2) : '',
+    song_status: t.song_status, song_error: t.song_error,
+    song_json: t.song_json ? JSON.stringify(t.song_json, null, 2) : '',
   };
 
   return (
@@ -40,7 +41,11 @@ export default async function EditTemplate({ params, searchParams }: Props) {
         )}
       </div>
       <TemplateStudio
-        t={{ ...(t as TemplateData), movie_json: t.movie_json ? JSON.stringify(t.movie_json, null, 2) : '' }}
+        t={{
+          ...(t as TemplateData),
+          movie_json: t.movie_json ? JSON.stringify(t.movie_json, null, 2) : '',
+          song_json: t.song_json ? JSON.stringify(t.song_json, null, 2) : '',
+        }}
         categories={cats.data ?? []}
         tiers={tiers.data ?? []}
         layouts={(layouts.data ?? []) as LayoutOption[]}

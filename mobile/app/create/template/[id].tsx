@@ -15,13 +15,11 @@ import {
   IconButton,
   type IconName,
   IconSwap,
-  PauseGlyph,
   PlayGlyph,
   PressableScale,
   StickyFooter,
   STICKY_FOOTER_SPACE,
 } from '@/components';
-import { useFakePlayback } from '@/hooks/useFakePlayback';
 import { useCreateFlow } from '@/store/createFlow';
 import { colors, enterUp, radius, screenPadding, stagger } from '@/theme';
 import { discountPercent, formatCount, formatPrice } from '@/utils/format';
@@ -41,7 +39,6 @@ export default function TemplatePreview() {
   const { data: t, isLoading } = useTemplate(id);
   const [saved, setSaved] = useState(false);
   const [copied, setCopied] = useState(false);
-  const playback = useFakePlayback(t?.durationSec ?? 15);
 
   if (isLoading || !t) {
     return (
@@ -65,8 +62,11 @@ export default function TemplatePreview() {
     setTimeout(() => setCopied(false), 1500);
   };
 
+  const openPreview = () => router.push({ pathname: '/create/watch', params: { id: t.id } });
+
   const useTemplateNow = () => {
-    playback.stop();
+    const flow = useCreateFlow.getState();
+    if (flow.templateId && flow.templateId !== t.id) flow.reset(); // another template = a new gift, so a new song
     useCreateFlow.getState().set({ templateId: t.id, occasion: t.occasion });
     router.push('/create/details');
   };
@@ -74,7 +74,7 @@ export default function TemplatePreview() {
   return (
     <View style={styles.root}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: STICKY_FOOTER_SPACE + insets.bottom }}>
-        {/* Video preview (gradient stand-in until previewUrl exists) */}
+        {/* Hero: template art; play opens the real preview video full screen (create/watch) */}
         <View style={{ height: HERO_H + insets.top }}>
           <LinearGradient colors={t.colors} start={{ x: 0, y: 0 }} end={{ x: 0, y: 1 }} style={StyleSheet.absoluteFill} />
           {/* Template art (videos) or the finished sample picture (photo templates), 9:16 */}
@@ -97,22 +97,19 @@ export default function TemplatePreview() {
           <AppText variant="display" align="center" style={[styles.caption, { top: insets.top + 92 }]}>
             {SAMPLE_CAPTION[t.occasion]}
           </AppText>
-          <PressableScale onPress={playback.toggle} style={[styles.play, { top: insets.top + 190 }]} accessibilityRole="button" accessibilityLabel={playback.playing ? 'Pause preview' : 'Play preview'}>
-            <IconSwap active={playback.playing} on={<PauseGlyph size={22} />} off={<PlayGlyph size={22} />} />
+          <PressableScale onPress={openPreview} style={[styles.play, { top: insets.top + 190 }]} accessibilityRole="button" accessibilityLabel="Watch preview full screen">
+            <PlayGlyph size={22} />
           </PressableScale>
           <View style={styles.heroBottom}>
-            <View style={styles.soundPill}>
+            <PressableScale onPress={openPreview} style={styles.soundPill} accessibilityRole="button" accessibilityLabel="Watch preview with sound">
               <Icon name="volume" size={14} />
               <AppText variant="caption" style={{ fontSize: 11 }}>
-                Tap for sound
+                Tap to watch with sound
               </AppText>
-            </View>
+            </PressableScale>
             <View style={styles.durPill}>
-              <AppText variant="micro">{`0:${String(Math.round(playback.progress * t.durationSec)).padStart(2, '0')} / 0:${t.durationSec}`}</AppText>
+              <AppText variant="micro">{`0:${String(t.durationSec).padStart(2, '0')}`}</AppText>
             </View>
-          </View>
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${playback.progress * 100}%` }]} />
           </View>
         </View>
 
@@ -215,8 +212,6 @@ const styles = StyleSheet.create({
   heroBottom: { position: 'absolute', bottom: 34, left: screenPadding, right: screenPadding, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   soundPill: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 6 },
   durPill: { backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 8, paddingHorizontal: 8, paddingVertical: 5 },
-  progressTrack: { position: 'absolute', bottom: 22, left: screenPadding, right: screenPadding, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.25)' },
-  progressFill: { height: 3, borderRadius: 2, backgroundColor: colors.text },
   info: { paddingHorizontal: screenPadding, gap: 14, marginTop: -6 },
   tags: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
   nameRow: { flexDirection: 'row', alignItems: 'center' },

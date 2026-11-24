@@ -41,7 +41,7 @@ export default function Templates() {
           <TextInput
             value={q}
             onChangeText={setQ}
-            placeholder="Search 120+ templates"
+            placeholder="Search templates"
             placeholderTextColor={colors.faint}
             selectionColor={colors.pink}
             style={styles.searchInput}
